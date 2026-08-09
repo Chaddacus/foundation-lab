@@ -56,10 +56,32 @@ describe('project creation', () => {
     assert.equal(created.updatedAt, created.createdAt);
   });
 
-  test('survives a reconnect to the same database file, proving durability not just caching', () => {
-    service.createProject(actor, { name: 'Apollo', customerId: 'cust-1' });
-    const reopened = new ProjectsRepository(db);
-    assert.equal(reopened.listAll().length, 1);
+  test('survives closing and reopening the database file, which in-memory storage would not', async () => {
+    // The earlier version wrapped the SAME open in-memory handle in a second repository and
+    // called that durability. It proved only that two wrappers read one connection.
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+
+    const directory = await mkdtemp(join(tmpdir(), 'foundation-lab-durability-'));
+    const file = join(directory, 'projects.sqlite');
+
+    try {
+      const first = new DatabaseSync(file);
+      applyMigrations(first, [migration]);
+      new ProjectsService(new ProjectsRepository(first), fixedClock())
+        .createProject(actor, { name: 'Durable', customerId: 'cust-1' });
+      first.close();
+
+      const second = new DatabaseSync(file);
+      const rows = new ProjectsRepository(second).listAll();
+      second.close();
+
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].name, 'Durable');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

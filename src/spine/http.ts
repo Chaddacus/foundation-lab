@@ -19,6 +19,7 @@ import { AppError, isAppError, type ErrorKind } from './errors.ts';
 import { resolveActor, type Actor } from './actor.ts';
 import type { Config } from './config.ts';
 import { ATTR_APP_MODULE, currentTraceId, usableTraceId } from './telemetry.ts';
+import type { Logger } from './logger.ts';
 
 export interface RequestContext {
   readonly actor: Actor;
@@ -34,7 +35,7 @@ export interface Route {
   readonly module: string;
   /** Operation name for the span, e.g. `createProject`. */
   readonly operation: string;
-  readonly handler: (context: RequestContext) => unknown;
+  readonly handler: (context: RequestContext) => unknown | Promise<unknown>;
   /** HTTP status on success. Defaults to 200. */
   readonly successStatus?: number;
 }
@@ -64,13 +65,30 @@ export function createRequestListener(
   config: Config,
   tracer: Tracer,
   staticHandler: (req: IncomingMessage, res: ServerResponse) => boolean,
+  logger: Logger,
 ) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    const match = matchRoute(routes, req.method ?? 'GET', url.pathname);
+    // Parsing runs INSIDE the boundary. A malformed request line or Host header makes
+    // `new URL` throw, and a malformed percent-escape makes `decodeURIComponent` throw
+    // during matching. Both arrive before any authentication, so leaving them outside the
+    // boundary turned one unauthenticated GET into a process kill.
+    let match: { route: Route; params: Record<string, string> } | null;
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      match = matchRoute(routes, req.method ?? 'GET', url.pathname);
+    } catch {
+      sendJson(res, 400, {
+        error: { kind: 'validation', message: 'That request address is not valid.', reference: '' },
+      });
+      return;
+    }
 
     if (match === null) {
-      if (staticHandler(req, res)) return;
+      try {
+        if (staticHandler(req, res)) return;
+      } catch {
+        // A static handler failure must not escape either; fall through to the 404.
+      }
       sendJson(res, 404, { error: { kind: 'not_found', message: 'That page does not exist.', reference: '' } });
       return;
     }
@@ -87,7 +105,10 @@ export function createRequestListener(
         span.setAttribute('enduser.id', actor.id);
 
         const body = route.method === 'GET' ? undefined : await readJsonBody(req);
-        const result = route.handler({ actor, params, body });
+        // Awaited even though slice-1 handlers are synchronous: `Route` is the spine's
+        // extension point, and an un-awaited async handler would serialize an empty object
+        // on success and let its rejection escape the boundary entirely.
+        const result = await route.handler({ actor, params, body });
 
         span.setStatus({ code: SpanStatusCode.OK });
         sendJson(res, route.successStatus ?? 200, { data: result });
@@ -97,13 +118,11 @@ export function createRequestListener(
         span.setStatus({ code: SpanStatusCode.ERROR, message: payload.error.kind });
         span.setAttribute('error.type', payload.error.kind);
         if (status >= 500) {
-          console.error(JSON.stringify({
-            level: 'error',
+          logger.error(error instanceof Error ? error.message : String(error), {
             module: route.module,
             operation: route.operation,
-            trace_id: span.spanContext().traceId,
-            message: error instanceof Error ? error.message : String(error),
-          }));
+            error_type: payload.error.kind,
+          });
         }
         sendJson(res, status, payload);
       } finally {

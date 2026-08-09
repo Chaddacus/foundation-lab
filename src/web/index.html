@@ -44,8 +44,11 @@
         Region owned by the Projects module. The shell provides the slot; the module owns
         everything rendered inside it.
       -->
-      <section aria-labelledby="projects-heading" data-projects-root>
+      <section aria-labelledby="projects-heading">
         <h2 id="projects-heading" class="visually-hidden">Project list and creation</h2>
+        <!-- The module renders into this inner container, never over the section itself:
+             replacing the section's own markup would destroy the heading that names it. -->
+        <div data-projects-root></div>
       </section>
     </main>
 

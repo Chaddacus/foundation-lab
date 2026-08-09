@@ -1,7 +1,8 @@
 /**
  * Static asset serving for the web frontend.
  *
- * Responsibility: serve the files under `src/web` for non-API requests.
+ * Responsibility: serve static files for non-API requests, from a set of mounted roots —
+ * the application shell under `src/web`, plus each module's own UI directory.
  *
  * Place in the system: spine. Serving the application shell is bootstrap wiring, not a
  * capability. Feature UI code lives with its module's assets; this file only delivers bytes.

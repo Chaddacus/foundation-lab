@@ -8,10 +8,11 @@
  * receive the values they need through dependency registration; they do not read
  * `process.env` themselves.
  *
- * Boundary: this file resolves NO secret values. Per SPEC §7 the repository carries
- * secret *references* (`rbw://…` on this machine's personal plane). Validating
- * configuration means checking a reference is present and well-formed — never printing
- * or dereferencing it here.
+ * Boundary: this file resolves NO secret values, and slice 1 needs no secret at all — there
+ * is no credential in this configuration yet. When one arrives, the repository will carry a
+ * secret *reference* (`rbw://…`, the personal plane per SPEC §7), and validating it will
+ * mean checking the reference is present and well formed — never printing or dereferencing
+ * it here.
  */
 
 import { AppError } from './errors.ts';

@@ -33,6 +33,19 @@ export const systemClock: ServiceClock = {
   newId: () => crypto.randomUUID(),
 };
 
+/**
+ * Reject a missing or blank project id before it reaches storage.
+ *
+ * Lives in the service so every adapter inherits one answer. Schema validity in a tool
+ * definition is not semantic correctness, and an HTTP path segment is unvalidated by
+ * definition — neither can be trusted to have done this.
+ */
+function requireProjectId(id: unknown): asserts id is string {
+  if (typeof id !== 'string' || id.trim() === '') {
+    throw AppError.validation('A project id is required.');
+  }
+}
+
 export class ProjectsService implements ProjectsCapability {
   readonly #repository: ProjectsRepository;
   readonly #clock: ServiceClock;
@@ -65,8 +78,15 @@ export class ProjectsService implements ProjectsCapability {
     return project;
   }
 
-  /** Raises `not_found` for an unknown id — the absence of a project is a client-visible fact. */
+  /**
+   * Raises `not_found` for an unknown id — the absence of a project is a client-visible fact.
+   *
+   * The id is validated HERE rather than in an adapter. When only the MCP adapter checked
+   * it, the two adapters answered a blank id differently (`validation` vs `not_found`),
+   * which is precisely the divergence SPEC §3.3 forbids.
+   */
   getProject(actor: Actor, id: string): Project {
+    requireProjectId(id);
     const project = this.#repository.findById(id);
     if (project === null) {
       throw AppError.notFound(`No project exists with id ${id}.`);

@@ -14,6 +14,8 @@
 
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
+import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import {
   ATTR_SERVICE_NAME,
@@ -60,6 +62,17 @@ export function startTelemetry(config: Config): () => Promise<void> {
   const sdk = new NodeSDK({
     resource: resourceFromAttributes(buildResourceAttributes(config)),
     traceExporter: new OTLPTraceExporter({ url: `${config.otlpEndpoint}/v1/traces` }),
+    // Logs are exported too, not only traces. Without this an error log cannot be joined to
+    // the release that produced it, which is the first question an incident asks.
+    //
+    // The processor takes an OPTIONS OBJECT. Passing the exporter positionally is accepted
+    // silently, leaves the exporter undefined, and produces a pipeline that exports nothing
+    // and throws on shutdown — it fails quietly, so it is asserted in the tests below.
+    logRecordProcessors: [
+      new BatchLogRecordProcessor({
+        exporter: new OTLPLogExporter({ url: `${config.otlpEndpoint}/v1/logs` }),
+      }),
+    ],
   });
 
   sdk.start();

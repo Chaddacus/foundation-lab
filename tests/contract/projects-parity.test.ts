@@ -42,6 +42,121 @@ function shape(project: unknown): unknown {
   return rest;
 }
 
+/**
+ * Inputs chosen to DISCRIMINATE, not merely to exercise.
+ *
+ * The previous version hand-picked inputs that happened to hit the same outcome on both
+ * paths, so an HTTP-only default (`name: input.name ?? 'Untitled'`) passed the whole suite.
+ * These cases include nullish, absent, wrong-typed, whitespace, and extra-field inputs
+ * precisely because those are where a one-sided default or coercion hides.
+ */
+const CREATE_CASES: readonly { label: string; input: unknown }[] = [
+  { label: 'complete input', input: { name: 'Apollo', description: 'Lunar', customerId: 'cust-1' } },
+  { label: 'no description', input: { name: 'Apollo', customerId: 'cust-1' } },
+  { label: 'empty object', input: {} },
+  { label: 'absent name', input: { customerId: 'cust-1' } },
+  { label: 'null name', input: { name: null, customerId: 'cust-1' } },
+  { label: 'undefined name', input: { name: undefined, customerId: 'cust-1' } },
+  { label: 'empty name', input: { name: '', customerId: 'cust-1' } },
+  { label: 'whitespace name', input: { name: '   ', customerId: 'cust-1' } },
+  { label: 'absent customer', input: { name: 'Apollo' } },
+  { label: 'null customer', input: { name: 'Apollo', customerId: null } },
+  { label: 'wrong-typed name', input: { name: 42, customerId: 'cust-1' } },
+  { label: 'over-long name', input: { name: 'x'.repeat(121), customerId: 'cust-1' } },
+  { label: 'untrimmed values', input: { name: '  Apollo  ', customerId: '  cust-1  ' } },
+  { label: 'unexpected extra field', input: { name: 'Apollo', customerId: 'cust-1', status: 'archived' } },
+];
+
+const UPDATE_CASES: readonly { label: string; input: unknown }[] = [
+  { label: 'rename', input: { name: 'Renamed' } },
+  { label: 'clear description', input: { description: '' } },
+  { label: 'no recognised field', input: {} },
+  { label: 'null name', input: { name: null } },
+  { label: 'undefined name', input: { name: undefined } },
+  { label: 'empty name', input: { name: '' } },
+  { label: 'unexpected extra field', input: { customerId: 'someone-else', name: 'Renamed' } },
+];
+
+/** Run a call and capture its outcome as a comparable value, whether it returned or threw. */
+function outcome(fn: () => unknown): unknown {
+  try {
+    const value = fn() as Record<string, unknown>;
+    if (value !== null && typeof value === 'object' && 'id' in value) return { ok: shape(value) };
+    return { ok: value };
+  } catch (error) {
+    const appError = error as AppError;
+    return { failed: { kind: appError.kind, message: appError.message, details: appError.details } };
+  }
+}
+
+describe('adapter parity over a discriminating input corpus', () => {
+  test('createProject behaves identically through HTTP and MCP for every case', () => {
+    for (const { label, input } of CREATE_CASES) {
+      const viaHttp = outcome(() => callRoute('POST', '/api/projects', {}, input));
+      const viaMcp = outcome(() => module_.callTool(actor, 'create_project', input as Record<string, unknown>));
+      assert.deepEqual(viaHttp, viaMcp, `create diverged between HTTP and MCP for: ${label}`);
+    }
+  });
+
+  test('updateProject behaves identically through HTTP and MCP for every case', () => {
+    for (const { label, input } of UPDATE_CASES) {
+      const viaHttp = outcome(() => {
+        const target = module_.capability.createProject(actor, { name: 'Base', description: 'keep', customerId: 'c' });
+        return callRoute('PATCH', '/api/projects/:id', { id: target.id }, input);
+      });
+      const viaMcp = outcome(() => {
+        const target = module_.capability.createProject(actor, { name: 'Base', description: 'keep', customerId: 'c' });
+        return module_.callTool(actor, 'update_project', { id: target.id, ...(input as object) });
+      });
+      assert.deepEqual(viaHttp, viaMcp, `update diverged between HTTP and MCP for: ${label}`);
+    }
+  });
+
+  test('getProject behaves identically through HTTP and MCP, present or absent', () => {
+    const created = module_.capability.createProject(actor, { name: 'Apollo', customerId: 'c' });
+    for (const id of [created.id, 'missing', '']) {
+      assert.deepEqual(
+        outcome(() => callRoute('GET', '/api/projects/:id', { id })),
+        outcome(() => module_.callTool(actor, 'get_project', { id })),
+        `get diverged for id "${id}"`,
+      );
+    }
+  });
+});
+
+describe('capability coverage parity', () => {
+  /**
+   * Derived from the service's own methods rather than hand-listed, so a capability added
+   * in a later slice fails this test until BOTH adapters expose it. A hand-written list
+   * would silently stay stale — which is how an HTTP-only or MCP-only capability slips in.
+   *
+   * Read inside each test, not at suite-definition time, because the module is built per test.
+   */
+  const methodsOf = () => Object.getOwnPropertyNames(Object.getPrototypeOf(module_.capability))
+    .filter((name) => name !== 'constructor');
+
+  test('every capability method is reachable through both adapters', () => {
+    const capabilityMethods = methodsOf();
+    assert.ok(capabilityMethods.length > 0, 'no capability methods discovered');
+    const httpOperations = new Set(module_.routes.map((route) => route.operation));
+    // Tool names are snake_case of the method name: createProject -> create_project.
+    const toolOperations = new Set(module_.tools.map((tool) =>
+      tool.name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())));
+
+    for (const method of capabilityMethods) {
+      assert.ok(httpOperations.has(method), `capability ${method} has no HTTP route`);
+      assert.ok(toolOperations.has(method), `capability ${method} has no MCP tool`);
+    }
+  });
+
+  test('neither adapter exposes an operation the capability does not have', () => {
+    const known = new Set(methodsOf());
+    for (const route of module_.routes) {
+      assert.ok(known.has(route.operation), `HTTP route ${route.operation} is not a capability method`);
+    }
+  });
+});
+
 describe('create parity', () => {
   test('both adapters produce the same project from the same input', () => {
     const viaHttp = callRoute('POST', '/api/projects', {}, {

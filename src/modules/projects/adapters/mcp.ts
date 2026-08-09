@@ -12,6 +12,10 @@
  * (Standard 9). Authorization is enforced by the application at execution time through the
  * actor argument, never by tool description text.
  *
+ * This adapter validates NOTHING. Argument checking lives in the service so the HTTP path
+ * cannot answer the same bad input differently — an id check that lived only here made the
+ * two adapters disagree about a blank id.
+ *
  * SLICE 1 SCOPE: this file defines the tools and the dispatcher. The stdio transport that
  * serves them to an MCP client is not built yet, so these tools have contract-level proof
  * (`tests/contract/projects-parity.test.ts`) but no live-client proof. See SPEC §10.
@@ -100,35 +104,17 @@ export function dispatchProjectsTool(
       return projects.listProjects(actor);
 
     case 'get_project':
-      return projects.getProject(actor, requireStringArg(args, 'id'));
+      return projects.getProject(actor, args.id as string);
 
     case 'create_project':
       return projects.createProject(actor, args as unknown as CreateProjectInput);
 
     case 'update_project': {
       const { id, ...changes } = args;
-      return projects.updateProject(
-        actor,
-        requireStringArg(args, 'id'),
-        changes as unknown as UpdateProjectInput,
-      );
+      return projects.updateProject(actor, id as string, changes as unknown as UpdateProjectInput);
     }
 
     default:
       throw AppError.validation(`Unknown tool "${toolName}".`);
   }
-}
-
-/**
- * Read a required string argument.
- *
- * Schema validity is not semantic correctness (Standard 9): the tool schema is advisory
- * until a client honours it, so the dispatcher checks the argument itself.
- */
-function requireStringArg(args: Record<string, unknown>, name: string): string {
-  const value = args[name];
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw AppError.validation(`Tool argument "${name}" is required and must be a non-empty string.`);
-  }
-  return value;
 }

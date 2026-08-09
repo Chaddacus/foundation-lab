@@ -71,6 +71,11 @@ function render() {
     <form class="stack projects-form" data-testid="create-project-form" novalidate>
       <h3>Add a project</h3>
 
+      <!-- One fieldset around every control, so the DISABLED state is a single honest
+           switch rather than per-input bookkeeping that can drift out of step. -->
+      <fieldset class="stack form-fields" data-testid="create-fieldset">
+      <legend class="visually-hidden">New project details</legend>
+
       <div class="field">
         <label for="project-name">Project name</label>
         <input id="project-name" name="name" type="text" autocomplete="off"
@@ -95,17 +100,24 @@ function render() {
         <p class="field__error status-error" id="project-description-error" data-testid="error-description" hidden></p>
       </div>
 
+      <!-- The summary sits above the button, next to the fields it refers to. Below the
+           button it appeared underneath the very fields its text says to correct. -->
+      <p class="form-summary" data-testid="form-summary" role="alert" hidden></p>
+
       <div class="cluster">
         <button type="submit" data-testid="create-submit">Create project</button>
       </div>
+      </fieldset>
 
-      <p class="form-summary" data-testid="form-summary" role="alert" hidden></p>
+      <p class="status-error form-blocked" data-testid="form-blocked" hidden></p>
     </form>
 
     <h3>Existing projects</h3>
-    <!-- Politely announces list transitions (loaded, empty, failed) to assistive technology. -->
-    <div data-testid="project-list-region" aria-live="polite" aria-busy="true" data-list-state="loading">
-      <p data-testid="list-status">Loading projects…</p>
+    <!-- The live region is the status line ONLY. It used to wrap the table too, so every
+         create re-announced every row and cell on top of the success message. -->
+    <div data-testid="project-list-region" aria-busy="true" data-list-state="loading">
+      <p data-testid="list-status" role="status">Loading projects…</p>
+      <div data-testid="project-list-content"></div>
     </div>
   `;
 
@@ -113,28 +125,43 @@ function render() {
   void loadProjects();
 }
 
-/** Render the list region for one state. Every state has visible, announced text. */
+/**
+ * Render the list region for one state.
+ *
+ * Status text and table content are written separately: only the status paragraph is a live
+ * region, so a reload announces "3 projects" rather than reading out every row.
+ */
 function renderList(state, projects = [], error = null) {
   const region = root.querySelector('[data-testid="project-list-region"]');
+  const status = root.querySelector('[data-testid="list-status"]');
+  const content = root.querySelector('[data-testid="project-list-content"]');
+
   region.setAttribute('aria-busy', String(state === ListState.LOADING));
   // Always-present state marker. The region's inner elements differ per state, so without
   // this there is no single stable signal for "which state am I in" — needed by anything
   // observing the region, including browser proof.
   region.dataset.listState = state;
+  status.className = '';
+  content.innerHTML = '';
 
   if (state === ListState.LOADING) {
-    region.innerHTML = '<p data-testid="list-status">Loading projects…</p>';
+    status.textContent = 'Loading projects…';
     return;
   }
 
   if (state === ListState.EMPTY) {
-    region.innerHTML = `<p data-testid="list-status" class="text-muted">
-      No projects yet. Add the first one using the form above.</p>`;
+    status.className = 'text-muted';
+    status.textContent = 'No projects yet. Add the first one using the form above.';
     return;
   }
 
   if (state === ListState.READY) {
-    region.innerHTML = `
+    status.className = 'visually-hidden';
+    status.textContent = `${projects.length} ${projects.length === 1 ? 'project' : 'projects'}.`;
+    // The table lives in its own scroll container at EVERY width. Scoping the container to
+    // small screens let a long project name push the whole document sideways on desktop.
+    content.innerHTML = `
+      <div class="projects-table-scroll" tabindex="0" role="group" aria-label="Projects table, scrolls horizontally">
       <table class="projects-table" data-testid="project-list">
         <caption class="visually-hidden">Projects, newest first</caption>
         <thead>
@@ -149,7 +176,8 @@ function renderList(state, projects = [], error = null) {
               <td><time datetime="${escapeHtml(project.createdAt)}">${escapeHtml(project.createdAt.slice(0, 10))}</time></td>
             </tr>`).join('')}
         </tbody>
-      </table>`;
+      </table>
+      </div>`;
     return;
   }
 
@@ -160,22 +188,43 @@ function renderList(state, projects = [], error = null) {
     [ListState.ERROR]: 'Projects could not be loaded.',
   };
 
-  region.innerHTML = `
-    <p class="status-error" data-testid="list-status" role="alert">
-      ${escapeHtml(messages[state])}
-      ${error?.reference ? `<span class="text-muted"> Reference: <code>${escapeHtml(error.reference)}</code></span>` : ''}
-    </p>`;
+  status.className = 'status-error';
+  status.textContent = error?.reference
+    ? `${messages[state]} Reference: ${error.reference}`
+    : messages[state];
+}
+
+/**
+ * DISABLED state.
+ *
+ * When the caller is not authorized to read projects they cannot create one either, so the
+ * form is disabled and says why. Leaving it enabled offered a capability that always failed
+ * on submit — an invitation the application could not honour.
+ */
+function setFormAvailability(enabled, reason = '') {
+  const fieldset = root.querySelector('[data-testid="create-fieldset"]');
+  const blocked = root.querySelector('[data-testid="form-blocked"]');
+  if (fieldset === null) return;
+
+  fieldset.disabled = !enabled;
+  blocked.hidden = enabled;
+  blocked.textContent = enabled ? '' : reason;
 }
 
 async function loadProjects() {
   renderList(ListState.LOADING);
   try {
     const projects = await callApi(API);
+    setFormAvailability(true);
     renderList(projects.length === 0 ? ListState.EMPTY : ListState.READY, projects);
   } catch (error) {
     const state = error.kind === 'unauthorized' ? ListState.UNAUTHORIZED
       : error.kind === 'unavailable' || error.kind === 'dependency' ? ListState.UNAVAILABLE
       : ListState.ERROR;
+
+    if (state === ListState.UNAUTHORIZED) {
+      setFormAvailability(false, 'You are not signed in, so you cannot create a project. Sign in and reload.');
+    }
     renderList(state, [], error);
   }
 }

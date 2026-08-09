@@ -122,7 +122,7 @@ test.describe('Projects UI', () => {
     await page.goto('/');
 
     await expect(page.getByTestId('list-status')).toHaveText(/unreachable/i);
-    await expect(page.getByTestId('list-status')).toHaveAttribute('role', 'alert');
+    await expect(page.getByTestId('list-status')).toHaveAttribute('role', 'status');
     await page.screenshot({ path: 'test-results/proof-04-unavailable.png', fullPage: true });
   });
 
@@ -202,6 +202,134 @@ test.describe('Projects UI', () => {
       const box = await control.boundingBox();
       expect(box!.height, 'target height').toBeGreaterThanOrEqual(24);
     }
+  });
+
+  test('LOADING state is actually entered, not merely exited', async ({ page }) => {
+    // Previously only "not loading" was asserted, so deleting the loading state entirely
+    // still passed. This holds the response open and observes the state while it is live.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/api/projects', async (route) => { await held; await route.continue(); });
+
+    await page.goto('/');
+    const region = page.locator('[data-list-state]');
+    await expect(region).toHaveAttribute('data-list-state', 'loading');
+    await expect(region).toHaveAttribute('aria-busy', 'true');
+    await expect(page.getByTestId('list-status')).toHaveText(/Loading projects/);
+
+    release();
+    await expect(region).not.toHaveAttribute('data-list-state', 'loading');
+    await expect(region).toHaveAttribute('aria-busy', 'false');
+  });
+
+  test('SUBMITTING state disables the control and makes a double submit impossible', async ({ page }) => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let createCalls = 0;
+
+    await page.route('**/api/projects', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      createCalls += 1;
+      await held;
+      await route.continue();
+    });
+
+    await page.goto('/');
+    await listSettled(page);
+    await page.getByLabel('Project name').fill('Slow create');
+    await page.getByLabel('Customer id').fill('cust-slow');
+
+    const submit = page.getByTestId('create-submit');
+    await submit.click();
+
+    // The state is observable while the request is in flight.
+    await expect(submit).toBeDisabled();
+    await expect(submit).toHaveAttribute('aria-busy', 'true');
+    await expect(submit).toHaveText('Creating…');
+    await page.screenshot({ path: 'test-results/proof-06-submitting.png', fullPage: true });
+
+    // A second click during flight must not produce a second create.
+    await submit.click({ force: true });
+    release();
+
+    await expect(page.getByTestId('form-summary')).toHaveText(/Created "Slow create"/);
+    await expect(submit).toBeEnabled();
+    expect(createCalls, 'a double submit must not create twice').toBe(1);
+  });
+
+  test('the list is announced as a status, not by reading out the whole table', async ({ page }) => {
+    await page.goto('/');
+    await listSettled(page);
+
+    // The live region is the status line only. It previously wrapped the table, so every
+    // create re-announced every row and cell.
+    const status = page.getByTestId('list-status');
+    await expect(status).toHaveAttribute('role', 'status');
+    await expect(page.getByTestId('project-list-region')).not.toHaveAttribute('aria-live', /.*/);
+    await expect(page.getByTestId('project-list-content')).not.toHaveAttribute('aria-live', /.*/);
+  });
+
+  test('the table carries the semantics assistive technology needs', async ({ page }) => {
+    await page.goto('/');
+    await page.getByLabel('Project name').fill('Semantics');
+    await page.getByLabel('Customer id').fill('cust-sem');
+    await page.getByTestId('create-submit').click();
+    await expect(page.getByTestId('project-list')).toBeVisible();
+
+    await expect(page.locator('.projects-table caption')).toHaveText(/Projects, newest first/);
+    await expect(page.locator('.projects-table thead th[scope="col"]')).toHaveCount(4);
+    await expect(page.locator('.projects-table tbody th[scope="row"]').first()).toBeVisible();
+
+    // The shell's heading must survive the module's render: it names the region.
+    await expect(page.locator('#projects-heading')).toHaveCount(1);
+    const levels = await page.locator('h1, h2, h3').evaluateAll(
+      (nodes) => nodes.map((node) => Number(node.tagName.slice(1))),
+    );
+    expect(levels, 'heading outline must not skip a level').toEqual([1, 2, 3, 3]);
+  });
+
+  test('UNAUTHORIZED state disables the create form instead of inviting a doomed submit', async ({ page }) => {
+    await page.route('**/api/projects', (route) => route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { kind: 'unauthorized', message: 'Not signed in.', reference: '' } }),
+    }));
+    await page.goto('/');
+
+    await expect(page.locator('[data-list-state]')).toHaveAttribute('data-list-state', 'unauthorized');
+
+    // Assert the controls the user actually reaches. Playwright does not report a
+    // <fieldset> itself as disabled, so checking the fieldset alone would prove nothing —
+    // its descendants are where the effect is observable.
+    await expect(page.getByTestId('create-fieldset')).toHaveAttribute('disabled', '');
+    await expect(page.getByTestId('create-submit')).toBeDisabled();
+    await expect(page.getByLabel('Project name')).toBeDisabled();
+    await expect(page.getByLabel('Customer id')).toBeDisabled();
+    await expect(page.getByLabel(/Description/)).toBeDisabled();
+    await expect(page.getByTestId('form-blocked')).toHaveText(/cannot create a project/);
+    await page.screenshot({ path: 'test-results/proof-07-unauthorized.png', fullPage: true });
+  });
+
+  test('a long project name does not push the document sideways at any width', async ({ page }) => {
+    // Regression: the scroll container was scoped to <= 640px, so a long name the app's own
+    // 120-character limit permits scrolled the whole page at every desktop width.
+    await page.goto('/');
+    await listSettled(page);
+    await page.getByLabel('Project name').fill('A'.repeat(118));
+    await page.getByLabel('Customer id').fill('C'.repeat(40));
+    await page.getByTestId('create-submit').click();
+    await expect(page.getByTestId('project-list')).toBeVisible();
+
+    for (const width of [1440, 1280, 1024, 800, 700, 640, 480, 375, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      const overflows = await page.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth + 1,
+      );
+      expect(overflows, `page scrolls horizontally at ${width}px`).toBe(false);
+    }
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.screenshot({ path: 'test-results/proof-08-long-name-desktop.png', fullPage: true });
   });
 
   test('the layout does not break at a small viewport and hides no capability', async ({ page }) => {

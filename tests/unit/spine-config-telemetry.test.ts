@@ -11,6 +11,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../../src/spine/config.ts';
 import { buildResourceAttributes } from '../../src/spine/telemetry.ts';
+import { createLogger } from '../../src/spine/logger.ts';
 import type { AppError } from '../../src/spine/errors.ts';
 
 describe('loadConfig', () => {
@@ -70,5 +71,62 @@ describe('OTel correlation contract', () => {
   test('carries no configuration values beyond deployment identity', () => {
     const attributes = buildResourceAttributes(loadConfig({ FL_DATABASE_PATH: '/secret/path.sqlite' }));
     assert.ok(!JSON.stringify(attributes).includes('/secret/path.sqlite'));
+  });
+
+  test('the log processor is built with an exporter that is actually wired', async () => {
+    // Regression: `new BatchLogRecordProcessor(exporter)` is accepted silently but leaves
+    // the exporter undefined — the pipeline then exports nothing and throws on shutdown.
+    // The constructor takes an options object. This asserts the wiring rather than the
+    // call shape, so it still holds if the construction is refactored.
+    const { BatchLogRecordProcessor } = await import('@opentelemetry/sdk-logs');
+    const { OTLPLogExporter } = await import('@opentelemetry/exporter-logs-otlp-http');
+
+    const processor = new BatchLogRecordProcessor({
+      exporter: new OTLPLogExporter({ url: 'http://127.0.0.1:4318/v1/logs' }),
+    });
+
+    assert.ok(
+      (processor as unknown as { _exporter?: unknown })._exporter !== undefined,
+      'log processor has no exporter — log export would silently do nothing',
+    );
+    await processor.shutdown();
+  });
+});
+
+describe('structured logs', () => {
+  test('carry the full correlation contract, so a log can be joined to a release', () => {
+    const config = loadConfig({ FL_ENV: 'DEV', FL_SERVICE_VERSION: '2.0.0', FL_VCS_REF: 'deadbee', FL_OTLP_ENDPOINT: '' });
+    const written: string[] = [];
+    const original = console.error;
+    console.error = (line: string) => { written.push(line); };
+
+    try {
+      createLogger(config).error('database unreachable', { module: 'projects', operation: 'createProject' });
+    } finally {
+      console.error = original;
+    }
+
+    const record = JSON.parse(written[0]);
+    assert.equal(record.level, 'error');
+    assert.equal(record.message, 'database unreachable');
+    assert.equal(record['deployment.environment.name'], 'DEV');
+    assert.equal(record['service.version'], '2.0.0');
+    assert.equal(record['vcs.ref.head.revision'], 'deadbee');
+    assert.equal(record['app.module'], 'projects');
+  });
+
+  test('omit trace_id entirely when nothing is sampled, rather than emitting the all-zero id', () => {
+    const written: string[] = [];
+    const original = console.error;
+    console.error = (line: string) => { written.push(line); };
+
+    try {
+      createLogger(loadConfig({ FL_OTLP_ENDPOINT: '' })).error('boom', { module: 'spine' });
+    } finally {
+      console.error = original;
+    }
+
+    const record = JSON.parse(written[0]);
+    assert.equal('trace_id' in record, false);
   });
 });

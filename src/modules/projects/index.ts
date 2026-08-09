@@ -5,8 +5,12 @@
  * hands the spine everything it needs: a migration, routes, MCP tools, and the capability.
  *
  * Place in the system: the Projects module boundary. The spine imports THIS file only.
- * Nothing outside the module imports `service.ts`, `repository.ts`, or `domain.ts` — that
- * is what makes the boundary in SPEC §3.2 real rather than aspirational.
+ *
+ * The module's own tests DO import `service.ts`, `repository.ts`, and `domain.ts` directly,
+ * because a module's tests are inside its boundary and testing through the public surface
+ * alone would need a running server to prove a pure validation rule. No production code
+ * outside the module reaches past this file. Nothing mechanically enforces that yet — it is
+ * a convention this comment documents, not a control.
  */
 
 import type { DatabaseSync } from 'node:sqlite';

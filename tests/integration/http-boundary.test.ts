@@ -85,13 +85,59 @@ describe('status mapping', () => {
     assert.equal(response.status, 400);
   });
 
-  test('an oversized body is refused rather than buffered', async () => {
+  test('an oversized body is refused by the body limit, not incidentally by field validation', async () => {
+    // The payload is otherwise VALID — an over-long name would fail domain validation and
+    // return 400 even with the body limit removed, so it proved nothing about the limit.
     const response = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'x'.repeat(100_000), customerId: 'c' }),
+      body: JSON.stringify({ name: 'Apollo', customerId: 'c', description: 'x'.repeat(70_000) }),
     });
+
     assert.equal(response.status, 400);
+    const { error } = await response.json();
+    assert.equal(error.message, 'That request is too large.');
+  });
+});
+
+describe('malformed requests cannot kill the process', () => {
+  // Regression: URL construction and route matching ran OUTSIDE the error boundary, so
+  // `curl '.../%'` threw URIError from the listener and exited the process. One
+  // unauthenticated GET was a complete denial of service in every environment.
+
+  test('a malformed percent-escape in a path is a 400, and the server keeps serving', async () => {
+    const response = await fetch(`${baseUrl}/api/projects/%`);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.kind, 'validation');
+
+    assert.equal((await fetch(`${baseUrl}/api/projects`)).status, 200, 'server died after a malformed path');
+  });
+
+  test('a malformed Host header is a 400, and the server keeps serving', async () => {
+    // fetch() will not send an invalid Host, so the raw request goes over a socket.
+    const { connect } = await import('node:net');
+    const port = (server.address() as AddressInfo).port;
+
+    const status = await new Promise<string>((resolve, reject) => {
+      const socket = connect(port, '127.0.0.1', () => {
+        socket.write('GET /api/meta HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n');
+      });
+      let received = '';
+      socket.on('data', (chunk) => { received += chunk.toString(); });
+      socket.on('end', () => resolve(received.split('\r\n')[0]));
+      socket.on('error', reject);
+    });
+
+    assert.match(status, /^HTTP\/1\.1 400/, `expected 400, got: ${status}`);
+    assert.equal((await fetch(`${baseUrl}/api/projects`)).status, 200, 'server died after a malformed Host');
+  });
+
+  test('malformed escapes across several shapes all stay non-fatal', async () => {
+    for (const path of ['/%', '/api/projects/%zz', '/api/projects/%e0%a4%a', '/%c0%80']) {
+      const response = await fetch(`${baseUrl}${path}`);
+      assert.ok(response.status < 500, `${path} produced ${response.status}`);
+    }
+    assert.equal((await fetch(`${baseUrl}/api/projects`)).status, 200);
   });
 });
 
@@ -155,7 +201,10 @@ describe('actor resolution', () => {
     assert.equal(response.status, 200);
   });
 
-  test('outside LOCAL an unidentified caller is refused, so an unfinished seam denies rather than grants', async () => {
+  test('outside LOCAL every caller is refused, including one presenting the actor header', async () => {
+    // Regression: the header was accepted in every environment, so a single forged header
+    // granted full cross-tenant read and write. The header is unverified, so it is trusted
+    // ONLY in LOCAL; DEV and SANDBOX refuse all traffic until real authentication exists.
     const devApp = buildApp(testConfig({ FL_ENV: 'DEV' }));
     const devServer = createServer(devApp.listener);
     await new Promise<void>((resolve) => devServer.listen(0, '127.0.0.1', resolve));
@@ -166,8 +215,15 @@ describe('actor resolution', () => {
       assert.equal(anonymous.status, 401);
       assert.equal((await anonymous.json()).error.kind, 'unauthorized');
 
-      const identified = await fetch(`${devUrl}/api/projects`, { headers: { [ACTOR_HEADER]: 'alice' } });
-      assert.equal(identified.status, 200);
+      const forged = await fetch(`${devUrl}/api/projects`, { headers: { [ACTOR_HEADER]: 'alice' } });
+      assert.equal(forged.status, 401, 'an unverified header must not be accepted as identity');
+
+      const write = await fetch(`${devUrl}/api/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [ACTOR_HEADER]: 'alice' },
+        body: JSON.stringify({ name: 'Forged', customerId: 'victim' }),
+      });
+      assert.equal(write.status, 401, 'a forged header must not be able to write');
     } finally {
       await new Promise<void>((resolve) => devServer.close(() => resolve()));
       devApp.close();
