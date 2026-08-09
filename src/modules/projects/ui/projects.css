@@ -1,0 +1,103 @@
+/* Projects — module-owned styling.
+ *
+ * Responsibility: appearance of the project list and create form only.
+ *
+ * Place in the system: inside the Projects module, next to the UI it styles (Standard 10).
+ * It styles nothing outside `[data-projects-root]`, so it cannot leak into another module.
+ *
+ * All values derive from foundation.css tokens.
+ */
+
+.projects-form {
+  max-width: 40rem;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field label {
+  font-weight: 600;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  /* Comfortably above the 24px WCAG 2.2 minimum target size. */
+  min-height: calc(var(--control-min-target) + var(--space-3));
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field__hint,
+.field__error {
+  font-size: var(--text-0);
+}
+
+.projects-form button[type='submit'] {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  border-color: var(--color-primary);
+  font-weight: 600;
+}
+
+.form-summary {
+  font-weight: 600;
+}
+
+.projects-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-block-start: var(--space-3);
+}
+
+.projects-table th,
+.projects-table td {
+  text-align: start;
+  padding: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.projects-table thead th {
+  font-size: var(--text-0);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.badge {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-1);
+  font-size: var(--text-0);
+  border: 1px solid var(--color-border);
+}
+
+/* Status is carried by the badge text as well as its color — color alone is not a cue. */
+.badge--active {
+  color: var(--color-success);
+  border-color: currentColor;
+}
+
+.badge--archived {
+  color: var(--color-text-muted);
+  border-color: currentColor;
+}
+
+/* Small screens: the table scrolls rather than dropping columns. No capability is hidden. */
+@media (max-width: 40rem) {
+  .projects-table {
+    display: block;
+    overflow-x: auto;
+  }
+}

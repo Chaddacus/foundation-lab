@@ -1,0 +1,34 @@
+{
+  "$comment": "Foundation Lab verification profile. The foundation defines tier semantics (verify-fast / verify-module / verify-full); this file defines the commands. FAST must stay cheap enough to run often.",
+  "fast": [
+    {
+      "name": "app-builds",
+      "command": "FL_DATABASE_PATH=':memory:' FL_OTLP_ENDPOINT='' node -e \"import('./src/spine/app.ts').then(m => { const a = m.buildApp(); if (a.routes.length === 0) throw new Error('no routes composed'); a.close(); })\""
+    },
+    {
+      "name": "config-valid",
+      "command": "node --test tests/unit/spine-config-telemetry.test.ts"
+    },
+    {
+      "name": "critical-contract",
+      "command": "node --test tests/contract/projects-parity.test.ts"
+    }
+  ],
+  "module": {
+    "projects": [
+      { "name": "domain-unit", "command": "node --test tests/unit/projects-domain.test.ts" },
+      { "name": "persistence-integration", "command": "node --test tests/integration/projects-persistence.test.ts" },
+      { "name": "api-mcp-parity", "command": "node --test tests/contract/projects-parity.test.ts" },
+      { "name": "http-boundary", "command": "node --test tests/integration/http-boundary.test.ts" },
+      { "name": "ui-flow", "command": "npx playwright test tests/e2e/projects.spec.ts", "browser": true }
+    ],
+    "spine": [
+      { "name": "config-telemetry-unit", "command": "node --test tests/unit/spine-config-telemetry.test.ts" },
+      { "name": "http-boundary", "command": "node --test tests/integration/http-boundary.test.ts" }
+    ]
+  },
+  "full": [
+    { "name": "all-tests", "command": "node --test \"tests/**/*.test.ts\"" },
+    { "name": "browser-suite", "command": "npx playwright test", "browser": true }
+  ]
+}

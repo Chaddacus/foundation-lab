@@ -1,0 +1,13 @@
+node_modules/
+data/
+*.sqlite
+*.sqlite-journal
+
+# Local secret material never belongs in this repo — references only (SPEC §7).
+.env
+.env.*
+
+# Routine generated proof belongs in artifact storage, not Git (Standard 4).
+artifacts/
+test-results/
+playwright-report/

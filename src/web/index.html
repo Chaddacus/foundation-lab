@@ -1,0 +1,55 @@
+<!doctype html>
+<!--
+  Application shell.
+
+  Responsibility: document scaffold, global layout landmarks, design-system wiring, and the
+  mount point a feature module renders into.
+
+  Place in the system: UI spine (Standard 10). It owns layout and navigation composition
+  only. It MUST NOT contain project business rules — those live in the Projects module's
+  own UI directory, which this page loads as a module script.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Projects — Foundation Lab</title>
+    <link rel="stylesheet" href="/foundation.css" />
+    <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/modules/projects/projects.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <header class="app-header">
+      <div class="app-header__inner cluster">
+        <span class="app-brand">Foundation Lab</span>
+        <nav aria-label="Primary">
+          <ul class="cluster app-nav">
+            <li><a href="/" aria-current="page">Projects</a></li>
+          </ul>
+        </nav>
+        <!-- Filled from /api/meta. Empty until the real value arrives — never a guess. -->
+        <span class="text-muted app-env" data-testid="environment-badge" title="Loading deployment identity"></span>
+      </div>
+    </header>
+
+    <main id="main" class="app-main stack">
+      <h1>Projects</h1>
+      <p class="text-muted">
+        Projects belong to a customer and start life active.
+      </p>
+
+      <!--
+        Region owned by the Projects module. The shell provides the slot; the module owns
+        everything rendered inside it.
+      -->
+      <section aria-labelledby="projects-heading" data-projects-root>
+        <h2 id="projects-heading" class="visually-hidden">Project list and creation</h2>
+      </section>
+    </main>
+
+    <script type="module" src="/shell.js"></script>
+    <script type="module" src="/modules/projects/projects.js"></script>
+  </body>
+</html>

@@ -1,0 +1,79 @@
+/* Application shell styling (UI spine).
+ *
+ * Responsibility: global layout landmarks only — header, primary navigation, main column,
+ * skip link. Feature styling lives with its module (Standard 10).
+ *
+ * Every value here comes from a foundation.css token. No raw colors, no ad-hoc spacing:
+ * that is what keeps a later design-polish pass a token change rather than a rewrite.
+ */
+
+/* Hidden until focused. Clipping rather than a negative offset: an offset depends on the
+ * link being shorter than the offset, and a taller link leaves a visible sliver on screen. */
+.skip-link:not(:focus) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Reveal on keyboard focus — the link must be reachable, not merely present. */
+.skip-link:focus {
+  position: absolute;
+  inset-inline-start: var(--space-2);
+  inset-block-start: var(--space-2);
+  z-index: 1;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+}
+
+.app-header {
+  border-block-end: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.app-header__inner {
+  max-width: 70rem;
+  margin-inline: auto;
+  padding: var(--space-3);
+  justify-content: space-between;
+}
+
+.app-brand {
+  font-size: var(--text-2);
+  font-weight: 600;
+}
+
+.app-nav {
+  list-style: none;
+  padding: 0;
+}
+
+.app-nav a {
+  color: var(--color-text);
+  text-decoration: none;
+  padding: var(--space-2);
+  display: inline-block;
+  min-height: var(--control-min-target);
+}
+
+.app-nav a[aria-current='page'] {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  font-weight: 600;
+}
+
+.app-env {
+  font-family: var(--font-mono);
+  font-size: var(--text-0);
+  text-transform: uppercase;
+}
+
+.app-main {
+  max-width: 70rem;
+  margin-inline: auto;
+  padding: var(--space-4) var(--space-3) var(--space-5);
+}
