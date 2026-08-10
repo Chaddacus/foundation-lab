@@ -115,5 +115,12 @@ jobs:
           echo "  FL_SESSION_SECRET=\"\$(rbw get foundation-lab-sandbox-session)\" \\"
           echo "  docker compose -f compose.sandbox.yaml up -d"
           echo
-          echo "LIVE VERIFIED is declared only after this passes:"
+          echo "LIVE VERIFIED is declared only after this passes. The expectations are"
+          echo "REQUIRED -- without them the identity check compares nothing and reports a"
+          echo "green result that proves only that sign-in worked:"
+          echo
+          echo "  FL_EXPECT_DIGEST=${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }} \\"
+          echo "  FL_EXPECT_REVISION=${{ github.sha }} \\"
+          echo "  FL_VERIFY_EMAIL=<an account provisioned in that environment> \\"
+          echo "  FL_VERIFY_PASSWORD=<its password, from the secret backend> \\"
           echo "  node scripts/verify-deployment.ts http://127.0.0.1:4330"
