@@ -59,9 +59,13 @@ export interface CustomersCapability {
    * Exchange a credential for a session.
    *
    * Raises `unauthorized` for unknown email, wrong password, and locked-out account alike —
-   * one message for all three, so login cannot be used to enumerate accounts.
+   * one message for all three, so login cannot be used to enumerate accounts. Raises
+   * `dependency` (retryable) when password hashing is being shed under load.
+   *
+   * Asynchronous because hashing runs off the main thread: a synchronous login would block
+   * the single Node thread for the duration of a scrypt, which is the defect Phase 12 fixed.
    */
-  login(input: LoginInput): SessionGrant;
+  login(input: LoginInput): Promise<SessionGrant>;
 
   /** Resolve a session id to its actor, or null when absent, unknown, or expired. */
   resolveSession(sessionId: string): Actor | null;

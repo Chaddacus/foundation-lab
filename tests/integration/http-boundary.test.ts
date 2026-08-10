@@ -81,7 +81,7 @@ before(async () => {
 
   const provisioning = app.modules.customers.provisioning;
   const acme = provisioning.provisionCustomer('Acme');
-  provisioning.provisionUser(acme.id, 'ana@acme.test', PASSWORD);
+  await provisioning.provisionUser(acme.id, 'ana@acme.test', PASSWORD);
   cookie = await signIn(baseUrl, 'ana@acme.test', PASSWORD);
 });
 
@@ -383,7 +383,7 @@ describe('authentication at the boundary', () => {
   test('signing out invalidates the session for every subsequent request', async () => {
     const provisioning = app.modules.customers.provisioning;
     const temp = provisioning.provisionCustomer('Temp');
-    provisioning.provisionUser(temp.id, 'temp@temp.test', PASSWORD);
+    await provisioning.provisionUser(temp.id, 'temp@temp.test', PASSWORD);
     const tempCookie = await signIn(baseUrl, 'temp@temp.test', PASSWORD);
 
     assert.equal((await fetch(`${baseUrl}/api/projects`, authed(tempCookie))).status, 200);

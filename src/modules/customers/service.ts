@@ -74,7 +74,7 @@ export class CustomersService implements CustomersCapability {
    * an unknown account costs the same time as a wrong password. Response text alone does
    * not hide account existence if the timing gives it away.
    */
-  login(input: LoginInput): SessionGrant {
+  async login(input: LoginInput): Promise<SessionGrant> {
     const email = typeof input?.email === 'string' ? input.email.trim() : '';
     const password = typeof input?.password === 'string' ? input.password : '';
 
@@ -97,7 +97,7 @@ export class CustomersService implements CustomersCapability {
     const row = this.#repository.findUserRowByEmail(email);
 
     if (row === null) {
-      verifyPassword(password, DUMMY_VERIFIER);
+      await this.#verify(password, DUMMY_VERIFIER);
       this.#throttle.record(email);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
@@ -108,7 +108,7 @@ export class CustomersService implements CustomersCapability {
     const lockedUntil = row.locked_until === null ? null : new Date(row.locked_until);
     const isLocked = lockedUntil !== null && lockedUntil > now;
 
-    const passwordMatches = verifyPassword(password, row.password_verifier);
+    const passwordMatches = await this.#verify(password, row.password_verifier);
 
     if (isLocked || !passwordMatches) {
       this.#throttle.record(email);
@@ -215,15 +215,34 @@ export class CustomersService implements CustomersCapability {
   }
 
   /** Provision a user. Not exposed through any adapter, for the same reason as above. */
-  provisionUser(customerId: string, email: string, password: string): User {
+  async provisionUser(customerId: string, email: string, password: string): Promise<User> {
     const user: User = {
       id: this.#clock.newId(),
       email: email.trim(),
       customerId,
       createdAt: this.#clock.now().toISOString(),
     };
-    this.#repository.insertUser({ ...user, passwordVerifier: hashPassword(password) });
+    this.#repository.insertUser({ ...user, passwordVerifier: await hashPassword(password) });
     return user;
+  }
+
+  /**
+   * Hash comparison with load-shedding mapped to a retryable failure.
+   *
+   * A saturated hash gate means the service is shedding password work under flood, not that
+   * the password is wrong. Returning `unauthorized` would tell a legitimate user their
+   * credentials are bad; `dependency` (503) tells them to retry, and keeps a flood from
+   * being silently absorbed as a wall of auth failures.
+   */
+  async #verify(password: string, verifier: string): Promise<boolean> {
+    try {
+      return await verifyPassword(password, verifier);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'HashGateSaturated') {
+        throw new AppError('dependency', 'The service is busy. Please try signing in again in a moment.');
+      }
+      throw error;
+    }
   }
 
   #recordFailure(userId: string, previousFailures: number, now: Date): void {

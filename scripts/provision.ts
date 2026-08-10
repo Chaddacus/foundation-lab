@@ -39,7 +39,7 @@ const app = buildApp(config);
 
 try {
   const customer = app.modules.customers.provisioning.provisionCustomer(customerName);
-  const user = app.modules.customers.provisioning.provisionUser(customer.id, email, password);
+  const user = await app.modules.customers.provisioning.provisionUser(customer.id, email, password);
 
   // Identifiers only. The password is never echoed, including on success.
   console.log(JSON.stringify({

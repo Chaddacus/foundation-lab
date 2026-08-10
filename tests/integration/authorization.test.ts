@@ -44,7 +44,7 @@ let globexProject: Project;
 let acmeRelease: Release;
 let acmeIncident: Incident;
 
-beforeEach(() => {
+beforeEach(async () => {
   app = buildApp(loadConfig({
     FL_DATABASE_PATH: ':memory:',
     FL_OTLP_ENDPOINT: '',
@@ -54,11 +54,11 @@ beforeEach(() => {
   const provisioning = app.modules.customers.provisioning;
   const acme = provisioning.provisionCustomer('Acme');
   const globex = provisioning.provisionCustomer('Globex');
-  provisioning.provisionUser(acme.id, 'ana@acme.test', PASSWORD);
-  provisioning.provisionUser(globex.id, 'gil@globex.test', PASSWORD);
+  await provisioning.provisionUser(acme.id, 'ana@acme.test', PASSWORD);
+  await provisioning.provisionUser(globex.id, 'gil@globex.test', PASSWORD);
 
-  ana = app.modules.customers.capability.login({ email: 'ana@acme.test', password: PASSWORD }).actor;
-  gil = app.modules.customers.capability.login({ email: 'gil@globex.test', password: PASSWORD }).actor;
+  ana = (await app.modules.customers.capability.login({ email: 'ana@acme.test', password: PASSWORD })).actor;
+  gil = (await app.modules.customers.capability.login({ email: 'gil@globex.test', password: PASSWORD })).actor;
 
   acmeProject = app.modules.projects.capability.createProject(ana, { name: 'Acme Apollo' });
   globexProject = app.modules.projects.capability.createProject(gil, { name: 'Globex Zeus' });

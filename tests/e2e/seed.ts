@@ -8,5 +8,5 @@
 
 import { seedFixture } from './fixture.ts';
 
-seedFixture();
+await seedFixture();
 console.log('e2e fixture seeded');
