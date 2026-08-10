@@ -107,6 +107,10 @@ for (const wantName of Object.keys(spec.rulesets ?? {})) {
     if (present === undefined) { fail(`${wantName} check ${rc.context}`, 'not required'); continue; }
     if (rc.require_source_binding && present.integration_id === undefined) {
       fail(`${wantName} check ${rc.context} source-bound`, 'no integration_id — the builder could self-report this check');
+    } else if (rc.expected_integration_id !== undefined && present.integration_id !== rc.expected_integration_id) {
+      // Not just "bound to something" — bound to the EXPECTED source. A check re-bound to a
+      // different integration would otherwise still pass (round-nine review).
+      fail(`${wantName} check ${rc.context} source`, `bound to integration ${present.integration_id}, expected ${rc.expected_integration_id}`);
     } else pass(`${wantName} check ${rc.context}`, rc.require_source_binding ? `bound to integration ${present.integration_id}` : 'required');
   }
 }

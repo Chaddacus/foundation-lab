@@ -8,10 +8,13 @@
  * always goes through those gates (SPEC §10.6 / observability L4).
  *
  * Two guards make it safe to be autonomous — and safe to NOT be, yet:
- *  - Production arming is gated by scripts/verify-runbook.mjs (foundation C2): the runbook's
- *    content hash must be in the CODEOWNERS-protected registry with a distinct human approver,
- *    committed and clean, declaring a typed capability. The builder cannot forge that entry —
- *    it merges only through a review the builder cannot give. DEV is the exempt test bed.
+ *  - Production arming is gated by scripts/verify-runbook.mjs (foundation C2): it reads the
+ *    runbook and its authority registry FROM THE PROTECTED BRANCH (`gh api`, not the working
+ *    tree), and refuses unless the runbook about to run byte-matches its merged blob and its
+ *    hash is registered there with a distinct approver. Authority derives from the merge:
+ *    an entry only reaches the protected branch through the code-owner review the builder
+ *    cannot supply (contingent on that ruleset, which the gate preflight verifies). DEV is
+ *    the exempt pre-registration test bed.
  *  - Every prerequisite and the post-action verification fail CLOSED: a missing precondition
  *    or an unproven result aborts and escalates rather than proceeding.
  *
@@ -62,17 +65,21 @@ function run(command: string, cmdArgs: readonly string[]): string {
   return execFileSync(command, cmdArgs, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 }
 
-// ---- Authority guard: production arming requires a registered, human-approved runbook. ----
-// Delegates to verify-runbook.mjs (foundation C2): the trust root is a registry entry that
-// can only be added through a CODEOWNERS-reviewed merge — content-hash bound, distinct
-// approver, typed capability, committed-and-clean. The builder cannot forge it. DEV is the
-// pre-registration test bed and is exempt (FND-043). Fail-closed: any non-zero verdict, or
-// an inability to run the verifier, refuses the arm.
+// ---- Authority guard: production arming requires a registry entry ON THE PROTECTED BRANCH. ----
+// Delegates to verify-runbook.mjs (foundation C2). Authority is read from the protected branch
+// via `gh api`, so a local/unmerged/edited runbook or registry cannot authorize. `main` is the
+// production authority branch: an entry reaches it only through a code-owner-reviewed merge the
+// builder cannot approve. DEV is the exempt test bed. Fail-closed on any non-may_arm verdict or
+// any inability to run the verifier.
 const RUNBOOK_FILE = 'docs/runbooks/rollback-to-last-live-verified.yaml';
+const REGISTRY_FILE = 'docs/runbooks/runbook-registry.json';
+const AUTHORITY_REPO = 'Chaddacus/foundation-lab';
+const AUTHORITY_REF = 'main';
 if (armed && (env as string).toUpperCase() !== 'DEV') {
   let verdict;
   try {
-    verdict = JSON.parse(run('node', ['scripts/verify-runbook.mjs', RUNBOOK_FILE, 'docs/runbooks/runbook-registry.json', env]));
+    verdict = JSON.parse(run('node', ['scripts/verify-runbook.mjs', RUNBOOK_FILE, REGISTRY_FILE, env,
+      '--repo', AUTHORITY_REPO, '--protected-ref', AUTHORITY_REF]));
   } catch (error) {
     // The verifier exits non-zero on refusal; execFileSync throws, and we read its stdout.
     const stdout = (error && typeof error === 'object' && 'stdout' in error) ? String(error.stdout) : '';

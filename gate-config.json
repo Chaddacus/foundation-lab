@@ -20,7 +20,8 @@
       "required_checks": [
         {
           "context": "verify",
-          "require_source_binding": true
+          "require_source_binding": true,
+          "expected_integration_id": 15368
         }
       ]
     }
