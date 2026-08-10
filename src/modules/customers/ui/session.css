@@ -1,0 +1,21 @@
+/* Customers — module-owned styling for the sign-in surface.
+ *
+ * Place in the system: inside the Customers module, next to the UI it styles (Standard 10).
+ * Field and form-message primitives come from the shell's promoted design layer.
+ */
+
+.signin-form {
+  max-width: 26rem;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+}
+
+.signin-form button[type='submit'] {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  border-color: var(--color-primary);
+  font-weight: 600;
+}

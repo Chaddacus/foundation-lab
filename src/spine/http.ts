@@ -16,8 +16,18 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { SpanStatusCode } from '@opentelemetry/api';
 import type { Tracer } from '@opentelemetry/api';
 import { AppError, isAppError, type ErrorKind } from './errors.ts';
-import { resolveActor, type Actor } from './actor.ts';
+import type { Actor } from './actor.ts';
+import { readCookie, verifySessionCookie, SESSION_COOKIE } from './session.ts';
 import type { Config } from './config.ts';
+
+/**
+ * Placeholder actor for public routes.
+ *
+ * Its empty `customerId` matches no tenant, so if it ever reaches a capability that
+ * compares customers, every comparison fails and the request is denied. It is inert by
+ * construction rather than by the caller remembering to check for it.
+ */
+const ANONYMOUS: Actor = { id: 'anonymous', customerId: '' };
 import { ATTR_APP_MODULE, currentTraceId, usableTraceId } from './telemetry.ts';
 import type { Logger } from './logger.ts';
 
@@ -25,6 +35,10 @@ export interface RequestContext {
   readonly actor: Actor;
   readonly params: Readonly<Record<string, string>>;
   readonly body: unknown;
+  /** The presented session id, if any. Only sign-out needs it; capabilities do not. */
+  readonly sessionId: string | null;
+  /** Set a cookie on the response. Used only by login and logout. */
+  readonly setCookie: (value: string) => void;
 }
 
 export interface Route {
@@ -38,6 +52,11 @@ export interface Route {
   readonly handler: (context: RequestContext) => unknown | Promise<unknown>;
   /** HTTP status on success. Defaults to 200. */
   readonly successStatus?: number;
+  /**
+   * Reachable without authentication. Defaults to false, so a new route is protected unless
+   * it deliberately opts out — forgetting the flag denies access rather than granting it.
+   */
+  readonly public?: boolean;
 }
 
 /** Maps the application error vocabulary onto HTTP. The only place that translation happens. */
@@ -66,6 +85,8 @@ export function createRequestListener(
   tracer: Tracer,
   staticHandler: (req: IncomingMessage, res: ServerResponse) => boolean,
   logger: Logger,
+  /** Resolves a verified session id to its actor, or null. Supplied by the Customers module. */
+  authenticate: (sessionId: string) => Actor | null,
 ) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     // Parsing runs INSIDE the boundary. A malformed request line or Host header makes
@@ -100,18 +121,44 @@ export function createRequestListener(
       span.setAttribute('http.request.method', route.method);
       span.setAttribute('http.route', route.pattern);
 
+      const cookies: string[] = [];
+
       try {
-        const actor = resolveActor(req.headers, config);
-        span.setAttribute('enduser.id', actor.id);
+        // CSRF control, paired with SameSite=Strict on the session cookie: a cross-site
+        // HTML form can only send url-encoded, plain-text, or multipart bodies, so
+        // requiring JSON means such a form cannot reach a state-changing route at all.
+        if (route.method !== 'GET') {
+          const contentType = (req.headers['content-type'] ?? '').split(';')[0].trim();
+          if (contentType !== 'application/json') {
+            throw AppError.validation('State-changing requests must use Content-Type: application/json.');
+          }
+        }
+
+        const signed = readCookie(req.headers.cookie, SESSION_COOKIE);
+        const sessionId = signed === null ? null : verifySessionCookie(signed, config.sessionSecret);
+        const actor = sessionId === null ? null : authenticate(sessionId);
+
+        if (actor === null && route.public !== true) {
+          throw new AppError('unauthorized', 'Sign in to continue.');
+        }
+        if (actor !== null) span.setAttribute('enduser.id', actor.id);
 
         const body = route.method === 'GET' ? undefined : await readJsonBody(req);
         // Awaited even though slice-1 handlers are synchronous: `Route` is the spine's
         // extension point, and an un-awaited async handler would serialize an empty object
         // on success and let its rejection escape the boundary entirely.
-        const result = await route.handler({ actor, params, body });
+        // A public route may run without an actor. The anonymous placeholder is inert: it
+        // has no customer, so any tenant comparison against it fails closed.
+        const result = await route.handler({
+          actor: actor ?? ANONYMOUS,
+          params,
+          body,
+          sessionId,
+          setCookie: (value: string) => cookies.push(value),
+        });
 
         span.setStatus({ code: SpanStatusCode.OK });
-        sendJson(res, route.successStatus ?? 200, { data: result });
+        sendJson(res, route.successStatus ?? 200, { data: result }, cookies);
       } catch (error) {
         const { status, payload } = translateError(error, span.spanContext().traceId);
         // Record the outcome on the span, never the request body — data minimization (SPEC §8).
@@ -233,12 +280,15 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
-function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+function sendJson(res: ServerResponse, status: number, payload: unknown, cookies: string[] = []): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
     'x-trace-id': currentTraceId(),
+    // Responses carrying identity must never be cached by a shared cache.
+    'cache-control': 'no-store',
+    ...(cookies.length > 0 ? { 'set-cookie': cookies } : {}),
   });
   res.end(body);
 }

@@ -44,13 +44,13 @@ beforeEach(() => {
 
 describe('project creation', () => {
   test('persists a created project so a later read returns it', () => {
-    const created = service.createProject(actor, { name: 'Apollo', customerId: 'cust-1' });
+    const created = service.createProject(actor, { name: 'Apollo' });
     const fetched = service.getProject(actor, created.id);
     assert.deepEqual(fetched, created);
   });
 
   test('creates projects active, with matching created and updated timestamps', () => {
-    const created = service.createProject(actor, { name: 'Apollo', customerId: 'cust-1' });
+    const created = service.createProject(actor, { name: 'Apollo' });
     assert.equal(created.status, 'active');
     assert.equal(created.createdAt, '2026-08-09T10:00:00.000Z');
     assert.equal(created.updatedAt, created.createdAt);
@@ -70,11 +70,11 @@ describe('project creation', () => {
       const first = new DatabaseSync(file);
       applyMigrations(first, [migration]);
       new ProjectsService(new ProjectsRepository(first), fixedClock())
-        .createProject(actor, { name: 'Durable', customerId: 'cust-1' });
+        .createProject(actor, { name: 'Durable' });
       first.close();
 
       const second = new DatabaseSync(file);
-      const rows = new ProjectsRepository(second).listAll();
+      const rows = new ProjectsRepository(second).listByCustomer(actor.customerId);
       second.close();
 
       assert.equal(rows.length, 1);
@@ -94,9 +94,9 @@ describe('reading projects', () => {
   });
 
   test('lists newest first', () => {
-    service.createProject(actor, { name: 'First', customerId: 'cust-1' });
+    service.createProject(actor, { name: 'First' });
     clock.advance('2026-08-09T11:00:00.000Z');
-    service.createProject(actor, { name: 'Second', customerId: 'cust-1' });
+    service.createProject(actor, { name: 'Second' });
 
     assert.deepEqual(service.listProjects(actor).map((project) => project.name), ['Second', 'First']);
   });
@@ -109,7 +109,7 @@ describe('reading projects', () => {
 describe('updating projects', () => {
   test('changes only the supplied field and leaves the rest intact', () => {
     const created = service.createProject(actor, {
-      name: 'Apollo', description: 'Original', customerId: 'cust-1',
+      name: 'Apollo', description: 'Original',
     });
     clock.advance('2026-08-09T12:00:00.000Z');
 
@@ -123,7 +123,7 @@ describe('updating projects', () => {
   });
 
   test('persists the update rather than only returning it', () => {
-    const created = service.createProject(actor, { name: 'Apollo', customerId: 'cust-1' });
+    const created = service.createProject(actor, { name: 'Apollo' });
     service.updateProject(actor, created.id, { name: 'Apollo II' });
     assert.equal(service.getProject(actor, created.id).name, 'Apollo II');
   });

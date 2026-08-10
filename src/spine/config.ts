@@ -15,6 +15,7 @@
  * it here.
  */
 
+import { randomBytes } from 'node:crypto';
 import { AppError } from './errors.ts';
 
 /** Deployment environments this application recognises. Maps to `deployment.environment.name`. */
@@ -32,6 +33,11 @@ export interface Config {
   readonly artifactDigest: string;
   /** OTLP/HTTP collector base endpoint. Empty string disables the exporter. */
   readonly otlpEndpoint: string;
+  /**
+   * HMAC key for session cookies. RESTRICTED — never log it, never return it, never place
+   * it in telemetry or an error message.
+   */
+  readonly sessionSecret: string;
 }
 
 const ENVIRONMENTS: readonly Environment[] = ['LOCAL', 'DEV', 'SANDBOX'];
@@ -61,7 +67,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     vcsRef: env.FL_VCS_REF ?? 'unknown',
     artifactDigest: env.FL_ARTIFACT_DIGEST ?? 'unbuilt',
     otlpEndpoint: env.FL_OTLP_ENDPOINT ?? 'http://127.0.0.1:4318',
+    sessionSecret: requireSessionSecret(env.FL_SESSION_SECRET, environment),
   });
+}
+
+/**
+ * Resolve the session signing key.
+ *
+ * LOCAL generates an ephemeral random key when none is supplied, so a fresh clone runs with
+ * no setup and restarting invalidates sessions — which is correct for local work, and means
+ * nobody is tempted to commit a shared literal.
+ *
+ * Every other environment REFUSES TO START without one. A default signing key is
+ * indistinguishable from no signature at all, so this must fail loudly at boot rather than
+ * quietly accept forged cookies in DEV or SANDBOX.
+ *
+ * The value arrives already resolved by the runtime (from an `rbw://` reference per SPEC
+ * §7). This function neither resolves references nor unlocks a backend — that stays a
+ * human act — and it never echoes the value, including in its error message.
+ */
+function requireSessionSecret(value: string | undefined, environment: Environment): string {
+  if (value !== undefined && value.trim() !== '') return value;
+
+  if (environment === 'LOCAL') {
+    return randomBytes(32).toString('base64');
+  }
+
+  throw AppError.validation(
+    `Configuration FL_SESSION_SECRET is required in ${environment}. ` +
+    'Supply it at runtime from the configured secret backend.',
+  );
 }
 
 function requireEnum<T extends string>(value: string, allowed: readonly T[], name: string): T {

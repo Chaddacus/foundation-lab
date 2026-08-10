@@ -1,11 +1,22 @@
-/* Application shell styling (UI spine).
+/* Application shell styling and promoted design primitives (UI spine).
  *
- * Responsibility: global layout landmarks only — header, primary navigation, main column,
- * skip link. Feature styling lives with its module (Standard 10).
+ * Responsibility: global layout landmarks — header, primary navigation, main column, skip
+ * link — plus the small set of primitives that MORE THAN ONE module now uses.
  *
- * Every value here comes from a foundation.css token. No raw colors, no ad-hoc spacing:
- * that is what keeps a later design-polish pass a token change rather than a rewrite.
+ * Promotion rule (Standard 10): a primitive lives with its module until reuse is
+ * demonstrated, then moves here. `.field` and the form messaging classes are used by the
+ * Customers sign-in form and the Projects create form; `.table-scroll`, `.data-table` and
+ * `.badge` are used by Projects and Releases. Each earned its place by being needed twice,
+ * not by being predicted.
+ *
+ * These are NOT in foundation.css: that template is the shared base across applications and
+ * changes to it carry large blast radius. These are this application's own primitives.
+ *
+ * Every value derives from a foundation.css token — no raw colors, no ad-hoc spacing — so a
+ * later design pass is a token change rather than a rewrite.
  */
+
+/* ---------- Shell ---------- */
 
 /* Hidden until focused. Clipping rather than a negative offset: an offset depends on the
  * link being shorter than the offset, and a taller link leaves a visible sliver on screen. */
@@ -18,7 +29,6 @@
   white-space: nowrap;
 }
 
-/* Reveal on keyboard focus — the link must be reachable, not merely present. */
 .skip-link:focus {
   position: absolute;
   inset-inline-start: var(--space-2);
@@ -66,9 +76,13 @@
   font-weight: 600;
 }
 
+.app-actor,
 .app-env {
   font-family: var(--font-mono);
   font-size: var(--text-0);
+}
+
+.app-env {
   text-transform: uppercase;
 }
 
@@ -76,4 +90,115 @@
   max-width: 70rem;
   margin-inline: auto;
   padding: var(--space-4) var(--space-3) var(--space-5);
+}
+
+/* ---------- Promoted: forms (Customers sign-in, Projects create) ---------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field label {
+  font-weight: 600;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  /* Comfortably above the 24px WCAG 2.2 minimum target size. */
+  min-height: calc(var(--control-min-target) + var(--space-3));
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field__hint,
+.field__error {
+  font-size: var(--text-0);
+}
+
+/* Layout-neutral grouping wrapper: it must not draw a second box inside a form card, and
+ * must keep the stack spacing the form relies on. */
+.form-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.form-summary,
+.form-blocked {
+  font-weight: 600;
+}
+
+/* ---------- Promoted: data tables (Projects, Releases) ---------- */
+
+/* Scroll container at every width. A long unbroken name — which the field limits permit —
+ * otherwise widens the document itself and scrolls the whole page. */
+.table-scroll {
+  overflow-x: auto;
+  margin-block-start: var(--space-3);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  text-align: start;
+  padding: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--color-border);
+  vertical-align: top;
+  /* Break an unbroken run of characters rather than forcing the column wider. */
+  overflow-wrap: anywhere;
+}
+
+.data-table thead th {
+  font-size: var(--text-0);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.data-table tbody tr[aria-current] {
+  background: var(--color-surface);
+}
+
+/* ---------- Promoted: status badges (Projects, Releases) ---------- */
+
+.badge {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-1);
+  font-size: var(--text-0);
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+/* Status is carried by the badge text as well as its color — color alone is not a cue. */
+.badge--active,
+.badge--verified {
+  color: var(--color-success);
+  border-color: currentColor;
+}
+
+.badge--deployed {
+  color: var(--color-primary);
+  border-color: currentColor;
+}
+
+.badge--pending {
+  color: var(--color-warning);
+  border-color: currentColor;
+}
+
+.badge--archived,
+.badge--rolled_back {
+  color: var(--color-text-muted);
+  border-color: currentColor;
 }

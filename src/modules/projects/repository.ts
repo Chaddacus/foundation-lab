@@ -77,10 +77,17 @@ export class ProjectsRepository {
     return row === undefined ? null : toProject(row);
   }
 
-  listAll(): readonly Project[] {
+  /**
+   * List one customer's projects.
+   *
+   * There is deliberately NO unscoped "list all projects" method. An unscoped query is the
+   * thing a later caller reaches for by accident, and its absence means tenant scoping
+   * cannot be forgotten at the call site — it is the only option available.
+   */
+  listByCustomer(customerId: string): readonly Project[] {
     const rows = this.#db
-      .prepare('SELECT * FROM projects ORDER BY created_at DESC, id DESC')
-      .all() as ProjectRow[];
+      .prepare('SELECT * FROM projects WHERE customer_id = ? ORDER BY created_at DESC, id DESC')
+      .all(customerId) as ProjectRow[];
     return rows.map(toProject);
   }
 

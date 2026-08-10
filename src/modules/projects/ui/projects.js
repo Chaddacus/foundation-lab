@@ -1,26 +1,26 @@
 /**
  * Projects — module UI.
  *
- * Responsibility: render the project list and the create form, own their UI state, and
- * drive the Projects HTTP contract.
+ * Responsibility: render the project list and create form, own their UI state, drive the
+ * Projects HTTP contract, and publish which project is selected.
  *
- * Place in the system: the Projects module's own UI (Standard 10). The shell provides the
- * `[data-projects-root]` slot; everything inside it belongs to this module. No other
- * module's UI reads or writes this state.
+ * Place in the system: the Projects module's own UI (Standard 10). The shell provides a
+ * slot; everything inside it belongs to this module. Selection is PUBLISHED through
+ * `onProjectSelected` rather than reaching into another module — the shell decides what
+ * a selection means, so Projects and Releases stay independent.
  *
- * Boundary: presentation and UI state only. Business rules are enforced server-side by the
- * module's domain layer — this file MUST NOT re-implement them, or the two would drift.
- * Client-side `required` attributes are an affordance, not the validation of record.
+ * Boundary: presentation and UI state only. Business rules are enforced server-side; this
+ * file MUST NOT re-implement them. In particular the project's owning customer is set from
+ * the session by the server and is deliberately not a form field.
  */
 
 const API = '/api/projects';
 
 /**
- * UI states for the list region, per the capability checklist.
+ * UI states for the list region.
  *
- * `partial` and `disabled` are deliberately absent: the list is a single small request with
- * no partial-success mode, and there is no permission tier in slice 1 that renders the form
- * disabled rather than absent.
+ * `partial` remains N/A: one small request, no partial-success mode. `disabled` applies —
+ * the create form is disabled when the caller is not authorized to use it.
  */
 const ListState = {
   LOADING: 'loading',
@@ -31,21 +31,27 @@ const ListState = {
   UNAVAILABLE: 'unavailable',
 };
 
-const root = document.querySelector('[data-projects-root]');
+let root = null;
+let selectionListener = () => {};
+let selectedId = null;
 
-/** Escape text before interpolation. The list renders server-stored names. */
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[character]);
 }
 
+/** Register the selection callback. The shell uses it to drive other modules. */
+export function onProjectSelected(listener) {
+  selectionListener = listener;
+}
+
 /**
  * Call the Projects API.
  *
  * Distinguishes three failure classes the UI must show differently: the request never
- * reached the service (`unavailable`), the caller is not identified (`unauthorized`), and
- * the service refused the request (everything else, carrying its reference id).
+ * reached the service (`unavailable`), the caller is not authenticated (`unauthorized`),
+ * and the service refused the request (everything else, carrying its reference id).
  */
 async function callApi(path, options = {}) {
   let response;
@@ -59,20 +65,20 @@ async function callApi(path, options = {}) {
   }
 
   const payload = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     throw payload.error ?? { kind: 'internal', message: 'Something went wrong.', reference: '' };
   }
   return payload.data;
 }
 
-function render() {
+export function mountProjects(container) {
+  root = container;
+  selectedId = null;
+
   root.innerHTML = `
     <form class="stack projects-form" data-testid="create-project-form" novalidate>
       <h3>Add a project</h3>
 
-      <!-- One fieldset around every control, so the DISABLED state is a single honest
-           switch rather than per-input bookkeeping that can drift out of step. -->
       <fieldset class="stack form-fields" data-testid="create-fieldset">
       <legend class="visually-hidden">New project details</legend>
 
@@ -84,24 +90,12 @@ function render() {
       </div>
 
       <div class="field">
-        <label for="project-customer">Customer id</label>
-        <input id="project-customer" name="customerId" type="text" autocomplete="off"
-               required aria-describedby="project-customer-hint project-customer-error" />
-        <p class="text-muted field__hint" id="project-customer-hint">
-          The customer that owns this project.
-        </p>
-        <p class="field__error status-error" id="project-customer-error" data-testid="error-customerId" hidden></p>
-      </div>
-
-      <div class="field">
         <label for="project-description">Description <span class="text-muted">(optional)</span></label>
         <textarea id="project-description" name="description" rows="3" maxlength="2000"
                   aria-describedby="project-description-error"></textarea>
         <p class="field__error status-error" id="project-description-error" data-testid="error-description" hidden></p>
       </div>
 
-      <!-- The summary sits above the button, next to the fields it refers to. Below the
-           button it appeared underneath the very fields its text says to correct. -->
       <p class="form-summary" data-testid="form-summary" role="alert" hidden></p>
 
       <div class="cluster">
@@ -113,8 +107,6 @@ function render() {
     </form>
 
     <h3>Existing projects</h3>
-    <!-- The live region is the status line ONLY. It used to wrap the table too, so every
-         create re-announced every row and cell on top of the success message. -->
     <div data-testid="project-list-region" aria-busy="true" data-list-state="loading">
       <p data-testid="list-status" role="status">Loading projects…</p>
       <div data-testid="project-list-content"></div>
@@ -123,6 +115,22 @@ function render() {
 
   root.querySelector('[data-testid="create-project-form"]').addEventListener('submit', onSubmit);
   void loadProjects();
+}
+
+/**
+ * DISABLED state.
+ *
+ * When the caller cannot read projects they cannot create one either, so the form is
+ * disabled and says why. Leaving it enabled would offer a capability that always fails.
+ */
+function setFormAvailability(enabled, reason = '') {
+  const fieldset = root.querySelector('[data-testid="create-fieldset"]');
+  const blocked = root.querySelector('[data-testid="form-blocked"]');
+  if (fieldset === null) return;
+
+  fieldset.disabled = !enabled;
+  blocked.hidden = enabled;
+  blocked.textContent = enabled ? '' : reason;
 }
 
 /**
@@ -137,9 +145,6 @@ function renderList(state, projects = [], error = null) {
   const content = root.querySelector('[data-testid="project-list-content"]');
 
   region.setAttribute('aria-busy', String(state === ListState.LOADING));
-  // Always-present state marker. The region's inner elements differ per state, so without
-  // this there is no single stable signal for "which state am I in" — needed by anything
-  // observing the region, including browser proof.
   region.dataset.listState = state;
   status.className = '';
   content.innerHTML = '';
@@ -158,30 +163,45 @@ function renderList(state, projects = [], error = null) {
   if (state === ListState.READY) {
     status.className = 'visually-hidden';
     status.textContent = `${projects.length} ${projects.length === 1 ? 'project' : 'projects'}.`;
-    // The table lives in its own scroll container at EVERY width. Scoping the container to
-    // small screens let a long project name push the whole document sideways on desktop.
+
+    // The table scrolls inside its own container at EVERY width; scoping that to small
+    // screens let a long project name push the whole document sideways on desktop.
     content.innerHTML = `
-      <div class="projects-table-scroll" tabindex="0" role="group" aria-label="Projects table, scrolls horizontally">
-      <table class="projects-table" data-testid="project-list">
+      <div class="table-scroll" tabindex="0" role="group" aria-label="Projects table, scrolls horizontally">
+      <table class="data-table" data-testid="project-list">
         <caption class="visually-hidden">Projects, newest first</caption>
         <thead>
-          <tr><th scope="col">Name</th><th scope="col">Customer</th><th scope="col">Status</th><th scope="col">Created</th></tr>
+          <tr><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Releases</th></tr>
         </thead>
         <tbody>
           ${projects.map((project) => `
-            <tr data-testid="project-row" data-project-id="${escapeHtml(project.id)}">
+            <tr data-testid="project-row" data-project-id="${escapeHtml(project.id)}"
+                ${project.id === selectedId ? 'aria-current="true"' : ''}>
               <th scope="row">${escapeHtml(project.name)}</th>
-              <td>${escapeHtml(project.customerId)}</td>
               <td><span class="badge badge--${escapeHtml(project.status)}">${escapeHtml(project.status)}</span></td>
               <td><time datetime="${escapeHtml(project.createdAt)}">${escapeHtml(project.createdAt.slice(0, 10))}</time></td>
+              <td><button type="button" class="control" data-testid="select-project"
+                          data-project-id="${escapeHtml(project.id)}">
+                    View releases<span class="visually-hidden"> for ${escapeHtml(project.name)}</span>
+                  </button></td>
             </tr>`).join('')}
         </tbody>
       </table>
       </div>`;
+
+    for (const button of content.querySelectorAll('[data-testid="select-project"]')) {
+      button.addEventListener('click', () => {
+        selectedId = button.dataset.projectId;
+        const project = projects.find((candidate) => candidate.id === selectedId);
+        for (const row of content.querySelectorAll('[data-testid="project-row"]')) {
+          row.toggleAttribute('aria-current', row.dataset.projectId === selectedId);
+        }
+        selectionListener(project ?? null);
+      });
+    }
     return;
   }
 
-  // Failure states explain impact and recovery, and keep the reference id for support.
   const messages = {
     [ListState.UNAUTHORIZED]: 'You are not signed in, so projects cannot be shown. Sign in and reload.',
     [ListState.UNAVAILABLE]: 'Foundation Lab is unreachable, so projects cannot be shown right now. Try again shortly.',
@@ -192,23 +212,6 @@ function renderList(state, projects = [], error = null) {
   status.textContent = error?.reference
     ? `${messages[state]} Reference: ${error.reference}`
     : messages[state];
-}
-
-/**
- * DISABLED state.
- *
- * When the caller is not authorized to read projects they cannot create one either, so the
- * form is disabled and says why. Leaving it enabled offered a capability that always failed
- * on submit — an invitation the application could not honour.
- */
-function setFormAvailability(enabled, reason = '') {
-  const fieldset = root.querySelector('[data-testid="create-fieldset"]');
-  const blocked = root.querySelector('[data-testid="form-blocked"]');
-  if (fieldset === null) return;
-
-  fieldset.disabled = !enabled;
-  blocked.hidden = enabled;
-  blocked.textContent = enabled ? '' : reason;
 }
 
 async function loadProjects() {
@@ -229,7 +232,6 @@ async function loadProjects() {
   }
 }
 
-/** Clear previous field errors so a retry never shows stale messages. */
 function clearFieldErrors(form) {
   for (const element of form.querySelectorAll('.field__error')) {
     element.hidden = true;
@@ -259,7 +261,6 @@ async function onSubmit(event) {
 
   clearFieldErrors(form);
 
-  // Submitting state: the control is disabled and busy, so a double submit cannot happen.
   submit.disabled = true;
   submit.setAttribute('aria-busy', 'true');
   submit.textContent = 'Creating…';
@@ -293,7 +294,6 @@ async function onSubmit(event) {
       ? `${error.message} Reference: ${error.reference}`
       : error.message;
 
-    // Send focus to the first field that failed so keyboard users are not stranded.
     const firstInvalid = form.querySelector('[aria-invalid="true"]');
     if (firstInvalid) firstInvalid.focus();
   } finally {
@@ -302,5 +302,3 @@ async function onSubmit(event) {
     submit.textContent = 'Create project';
   }
 }
-
-render();

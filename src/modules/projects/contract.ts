@@ -29,9 +29,10 @@ export interface Project {
   readonly name: string;
   readonly description: string;
   /**
-   * Owning customer. Slice 1 stores this as an opaque reference with no foreign key,
-   * because the Customers module does not exist yet. Slice 2 adds the real reference and
-   * authorizes against it. Projects MUST NOT read or write customer tables directly.
+   * Owning customer, and the tenant boundary every authorization check compares against.
+   * Set from the authenticated session at creation and never changed afterwards.
+   *
+   * Projects MUST NOT read or write customer tables directly; it holds the id only.
    */
   readonly customerId: string;
   readonly status: ProjectStatus;
@@ -39,10 +40,16 @@ export interface Project {
   readonly updatedAt: string;
 }
 
+/**
+ * Create input.
+ *
+ * There is no `customerId` field, deliberately. Ownership is taken from the authenticated
+ * session, so a client cannot assign a project to another tenant. A body that includes
+ * `customerId` is ignored rather than honoured — the field simply has no meaning here.
+ */
 export interface CreateProjectInput {
   readonly name: string;
   readonly description?: string;
-  readonly customerId: string;
 }
 
 /** Fields omitted are left unchanged. An update with no recognised field is a validation error. */

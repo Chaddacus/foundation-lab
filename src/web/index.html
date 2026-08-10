@@ -3,19 +3,20 @@
   Application shell.
 
   Responsibility: document scaffold, global layout landmarks, design-system wiring, and the
-  mount point a feature module renders into.
+  slots each capability module renders into.
 
-  Place in the system: UI spine (Standard 10). It owns layout and navigation composition
-  only. It MUST NOT contain project business rules — those live in the Projects module's
-  own UI directory, which this page loads as a module script.
+  Place in the system: UI spine (Standard 10). It owns layout, navigation, and the
+  signed-in/signed-out composition only. It contains no business rules — those live in each
+  module's own UI directory, which this page loads as module scripts.
 -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Projects — Foundation Lab</title>
+    <title>Foundation Lab</title>
     <link rel="stylesheet" href="/foundation.css" />
     <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/modules/customers/session.css" />
     <link rel="stylesheet" href="/modules/projects/projects.css" />
   </head>
   <body>
@@ -24,35 +25,42 @@
     <header class="app-header">
       <div class="app-header__inner cluster">
         <span class="app-brand">Foundation Lab</span>
-        <nav aria-label="Primary">
+        <nav aria-label="Primary" hidden data-testid="primary-nav">
           <ul class="cluster app-nav">
-            <li><a href="/" aria-current="page">Projects</a></li>
+            <li><a href="/" aria-current="page">Workspace</a></li>
           </ul>
         </nav>
-        <!-- Filled from /api/meta. Empty until the real value arrives — never a guess. -->
-        <span class="text-muted app-env" data-testid="environment-badge" title="Loading deployment identity"></span>
+        <span class="cluster">
+          <span class="text-muted app-actor" data-testid="actor-badge" hidden></span>
+          <button type="button" data-testid="sign-out" hidden>Sign out</button>
+          <span class="text-muted app-env" data-testid="environment-badge" title="Loading deployment identity"></span>
+        </span>
       </div>
     </header>
 
     <main id="main" class="app-main stack">
-      <h1>Projects</h1>
-      <p class="text-muted">
-        Projects belong to a customer and start life active.
-      </p>
+      <!-- Exactly one of these is present at a time. The signed-out view is not a modal over
+           the application; the application is simply not rendered until there is a session. -->
+      <div data-testid="signed-out-view" hidden>
+        <h1>Foundation Lab</h1>
+        <div data-signin-root></div>
+      </div>
 
-      <!--
-        Region owned by the Projects module. The shell provides the slot; the module owns
-        everything rendered inside it.
-      -->
-      <section aria-labelledby="projects-heading">
-        <h2 id="projects-heading" class="visually-hidden">Project list and creation</h2>
-        <!-- The module renders into this inner container, never over the section itself:
-             replacing the section's own markup would destroy the heading that names it. -->
-        <div data-projects-root></div>
-      </section>
+      <div data-testid="signed-in-view" hidden class="stack">
+        <h1>Workspace</h1>
+
+        <section aria-labelledby="projects-heading">
+          <h2 id="projects-heading">Projects</h2>
+          <div data-projects-root></div>
+        </section>
+
+        <section aria-labelledby="releases-heading">
+          <h2 id="releases-heading">Releases</h2>
+          <div data-releases-root></div>
+        </section>
+      </div>
     </main>
 
     <script type="module" src="/shell.js"></script>
-    <script type="module" src="/modules/projects/projects.js"></script>
   </body>
 </html>

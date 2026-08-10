@@ -17,11 +17,15 @@ import type { CreateProjectInput, UpdateProjectInput } from './contract.ts';
 export const NAME_MAX_LENGTH = 120;
 export const DESCRIPTION_MAX_LENGTH = 2000;
 
-/** A create input that has passed validation: trimmed, defaulted, and safe to persist. */
+/**
+ * A create input that has passed validation: trimmed, defaulted, and safe to persist.
+ *
+ * No `customerId`: ownership is supplied by the service from the authenticated session, so
+ * it is never a validated client input.
+ */
 export interface NormalizedCreate {
   readonly name: string;
   readonly description: string;
-  readonly customerId: string;
 }
 
 /**
@@ -45,16 +49,11 @@ export function normalizeCreate(input: CreateProjectInput): NormalizedCreate {
     details.description = `Use ${DESCRIPTION_MAX_LENGTH} characters or fewer.`;
   }
 
-  const customerId = typeof input?.customerId === 'string' ? input.customerId.trim() : '';
-  if (customerId === '') {
-    details.customerId = 'A project must belong to a customer.';
-  }
-
   if (Object.keys(details).length > 0) {
     throw AppError.validation('That project could not be saved. Correct the fields below and try again.', details);
   }
 
-  return { name, description, customerId };
+  return { name, description };
 }
 
 /**

@@ -13,45 +13,46 @@ import { AppError } from '../../src/spine/errors.ts';
 
 describe('normalizeCreate', () => {
   test('trims a valid project and defaults an absent description to empty', () => {
-    const result = normalizeCreate({ name: '  Apollo  ', customerId: ' cust-1 ' });
-    assert.deepEqual(result, { name: 'Apollo', description: '', customerId: 'cust-1' });
+    const result = normalizeCreate({ name: '  Apollo  ' });
+    assert.deepEqual(result, { name: 'Apollo', description: '' });
   });
 
   test('rejects a name that is only whitespace', () => {
     assert.throws(
-      () => normalizeCreate({ name: '   ', customerId: 'cust-1' }),
+      () => normalizeCreate({ name: '   ' }),
       (error: AppError) => error.kind === 'validation' && error.details?.name === 'Enter a project name.',
     );
   });
 
   test('rejects a name longer than the limit but accepts one exactly at it', () => {
-    assert.throws(() => normalizeCreate({ name: 'x'.repeat(NAME_MAX_LENGTH + 1), customerId: 'c' }));
-    assert.equal(normalizeCreate({ name: 'x'.repeat(NAME_MAX_LENGTH), customerId: 'c' }).name.length, NAME_MAX_LENGTH);
+    assert.throws(() => normalizeCreate({ name: 'x'.repeat(NAME_MAX_LENGTH + 1) }));
+    assert.equal(normalizeCreate({ name: 'x'.repeat(NAME_MAX_LENGTH) }).name.length, NAME_MAX_LENGTH);
   });
 
   test('rejects a description longer than the limit', () => {
     assert.throws(
-      () => normalizeCreate({ name: 'Apollo', customerId: 'c', description: 'x'.repeat(DESCRIPTION_MAX_LENGTH + 1) }),
+      () => normalizeCreate({ name: 'Apollo', description: 'x'.repeat(DESCRIPTION_MAX_LENGTH + 1) }),
       (error: AppError) => error.details?.description !== undefined,
     );
   });
 
-  test('requires a customer, because an unowned project has no authorization anchor', () => {
-    assert.throws(
-      () => normalizeCreate({ name: 'Apollo', customerId: '' }),
-      (error: AppError) => error.details?.customerId === 'A project must belong to a customer.',
-    );
+  test('ignores a client-supplied customerId entirely — ownership is not a client input', () => {
+    // Mass-assignment defence: ownership comes from the authenticated session. The field is
+    // not merely rejected, it has no meaning here, so it cannot reach storage.
+    const result = normalizeCreate({ name: 'Apollo', customerId: 'someone-elses-customer' } as never);
+    assert.deepEqual(result, { name: 'Apollo', description: '' });
+    assert.equal('customerId' in result, false);
   });
 
   test('reports every invalid field at once so a form need not be resubmitted to find the next error', () => {
     assert.throws(
-      () => normalizeCreate({ name: '', customerId: '' }),
+      () => normalizeCreate({ name: '', description: 'x'.repeat(DESCRIPTION_MAX_LENGTH + 1) }),
       (error: AppError) => Object.keys(error.details ?? {}).length === 2,
     );
   });
 
   test('treats a non-string field as missing rather than coercing it', () => {
-    assert.throws(() => normalizeCreate({ name: 42, customerId: 'c' } as never));
+    assert.throws(() => normalizeCreate({ name: 42 } as never));
   });
 });
 

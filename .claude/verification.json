@@ -10,17 +10,29 @@
       "command": "node --test tests/unit/spine-config-telemetry.test.ts"
     },
     {
-      "name": "critical-contract",
-      "command": "node --test tests/contract/projects-parity.test.ts"
+      "name": "authorization-heartbeat",
+      "$comment": "Tenant isolation is the property most costly to break silently, so it is checked at FAST as well as MODULE.",
+      "command": "node --test tests/integration/authorization.test.ts"
     }
   ],
   "module": {
+    "customers": [
+      { "name": "password-unit", "command": "node --test tests/unit/customers-passwords.test.ts" },
+      { "name": "auth-lifecycle", "command": "node --test tests/integration/customers-auth.test.ts" },
+      { "name": "boundary", "command": "node --test tests/integration/http-boundary.test.ts" },
+      { "name": "ui-flow", "command": "npx playwright test tests/e2e/authenticated-workspace.spec.ts", "browser": true }
+    ],
     "projects": [
       { "name": "domain-unit", "command": "node --test tests/unit/projects-domain.test.ts" },
       { "name": "persistence-integration", "command": "node --test tests/integration/projects-persistence.test.ts" },
       { "name": "api-mcp-parity", "command": "node --test tests/contract/projects-parity.test.ts" },
-      { "name": "http-boundary", "command": "node --test tests/integration/http-boundary.test.ts" },
+      { "name": "authorization", "command": "node --test tests/integration/authorization.test.ts" },
       { "name": "ui-flow", "command": "npx playwright test tests/e2e/projects.spec.ts", "browser": true }
+    ],
+    "releases": [
+      { "name": "domain-unit", "command": "node --test tests/unit/releases-domain.test.ts" },
+      { "name": "authorization", "command": "node --test tests/integration/authorization.test.ts" },
+      { "name": "adapter-authorization-parity", "command": "node --test tests/contract/authorization-parity.test.ts" }
     ],
     "spine": [
       { "name": "config-telemetry-unit", "command": "node --test tests/unit/spine-config-telemetry.test.ts" },

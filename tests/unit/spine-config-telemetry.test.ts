@@ -14,6 +14,14 @@ import { buildResourceAttributes } from '../../src/spine/telemetry.ts';
 import { createLogger } from '../../src/spine/logger.ts';
 import type { AppError } from '../../src/spine/errors.ts';
 
+/**
+ * A session secret for non-LOCAL configurations.
+ *
+ * Outside LOCAL the application refuses to start without one, so tests that build a DEV or
+ * SANDBOX config must supply it — that refusal is asserted separately below.
+ */
+const SECRET = { FL_SESSION_SECRET: 'test-secret-not-a-real-key' };
+
 describe('loadConfig', () => {
   test('defaults to a runnable LOCAL configuration with no environment set', () => {
     const config = loadConfig({});
@@ -42,7 +50,7 @@ describe('loadConfig', () => {
   });
 
   test('derives a per-environment database path so environments cannot share a file', () => {
-    assert.notEqual(loadConfig({ FL_ENV: 'DEV' }).databasePath, loadConfig({ FL_ENV: 'SANDBOX' }).databasePath);
+    assert.notEqual(loadConfig({ FL_ENV: 'DEV', ...SECRET }).databasePath, loadConfig({ FL_ENV: 'SANDBOX', ...SECRET }).databasePath);
   });
 
   test('returns a frozen object, so nothing mutates configuration at runtime', () => {
@@ -50,9 +58,43 @@ describe('loadConfig', () => {
   });
 });
 
+describe('session secret', () => {
+  test('LOCAL generates an ephemeral secret so a fresh clone runs with no setup', () => {
+    const first = loadConfig({});
+    const second = loadConfig({});
+    assert.ok(first.sessionSecret.length >= 32);
+    // Different per process start, so restarting invalidates sessions rather than
+    // reusing a value that has quietly become a shared constant.
+    assert.notEqual(first.sessionSecret, second.sessionSecret);
+  });
+
+  test('DEV and SANDBOX refuse to start without one, rather than defaulting', () => {
+    // A default signing key is indistinguishable from no signature at all: anyone who reads
+    // the source could mint sessions. This must be a loud startup failure.
+    for (const environment of ['DEV', 'SANDBOX']) {
+      assert.throws(
+        () => loadConfig({ FL_ENV: environment }),
+        (error: AppError) => error.kind === 'validation' && error.message.includes('FL_SESSION_SECRET'),
+        `${environment} accepted a missing session secret`,
+      );
+    }
+  });
+
+  test('the refusal never echoes the secret value', () => {
+    try {
+      loadConfig({ FL_ENV: 'DEV', FL_SESSION_SECRET: '   ' });
+      assert.fail('expected a refusal');
+    } catch (error) {
+      assert.ok(!(error as AppError).message.includes('   '.trim() || 'IMPOSSIBLE'));
+      assert.ok(!/secret is\s+\S+$/.test((error as AppError).message));
+    }
+  });
+});
+
 describe('OTel correlation contract', () => {
   test('carries every field the correlation contract requires', () => {
     const attributes = buildResourceAttributes(loadConfig({
+      ...SECRET,
       FL_ENV: 'DEV',
       FL_SERVICE_VERSION: '1.2.3',
       FL_VCS_REF: 'abc1234',
@@ -95,7 +137,7 @@ describe('OTel correlation contract', () => {
 
 describe('structured logs', () => {
   test('carry the full correlation contract, so a log can be joined to a release', () => {
-    const config = loadConfig({ FL_ENV: 'DEV', FL_SERVICE_VERSION: '2.0.0', FL_VCS_REF: 'deadbee', FL_OTLP_ENDPOINT: '' });
+    const config = loadConfig({ ...SECRET, FL_ENV: 'DEV', FL_SERVICE_VERSION: '2.0.0', FL_VCS_REF: 'deadbee', FL_OTLP_ENDPOINT: '' });
     const written: string[] = [];
     const original = console.error;
     console.error = (line: string) => { written.push(line); };
