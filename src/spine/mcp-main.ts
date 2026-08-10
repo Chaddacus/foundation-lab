@@ -46,7 +46,7 @@ if (email === '' || password === '') {
 
 let actor: Actor;
 try {
-  actor = app.modules.customers.capability.login({ email, password }).actor;
+  actor = (await app.modules.customers.capability.login({ email, password })).actor;
 } catch {
   // Deliberately does not echo the email or say which part failed — the same reticence the
   // HTTP login has, for the same reason.

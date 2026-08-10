@@ -243,8 +243,8 @@ export async function runSuite(options: { live?: boolean; fast?: boolean } = {})
   );
 
   const customer = app.modules.customers.provisioning.provisionCustomer('Eval');
-  app.modules.customers.provisioning.provisionUser(customer.id, 'eval@example.test', 'eval-password-value');
-  const actor = app.modules.customers.capability.login({ email: 'eval@example.test', password: 'eval-password-value' }).actor;
+  await app.modules.customers.provisioning.provisionUser(customer.id, 'eval@example.test', 'eval-password-value');
+  const actor = (await app.modules.customers.capability.login({ email: 'eval@example.test', password: 'eval-password-value' })).actor;
 
   const results: CaseResult[] = [];
 
