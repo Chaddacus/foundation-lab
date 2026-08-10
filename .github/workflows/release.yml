@@ -1,0 +1,105 @@
+# Release — build once, then promote the same artifact.
+#
+# Two jobs with a human decision between them:
+#   build   runs on main, produces ONE artifact, pushes it to GHCR by digest.
+#   deploy  requires the `sandbox-prod` environment, whose reviewer requirement IS Human
+#           Gate #2. The job cannot start until a human approves it. That is enforced by
+#           GitHub, not by this file, and not by anything in Claude's configuration.
+#
+# The artifact is identified by DIGEST throughout. A tag can be repointed at different
+# bytes, so a tag-based promotion would make "the artifact we approved" unverifiable.
+
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: 'Artifact digest to deploy (omit to deploy the digest just built)'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      # Lets the runner mint a short-lived OIDC token for provenance attestation, so the
+      # artifact carries proof of WHO built it and from what — the gap named in the Gate #2
+      # packet as "digest gives immutability, not authorship".
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # The base image is pinned by digest in the Dockerfile for the same reason the
+          # output is addressed by digest: reproducibility is not a claim unless it is checkable.
+          build-args: |
+            FL_VCS_REF=${{ github.sha }}
+            FL_SERVICE_VERSION=${{ github.ref_name }}-${{ github.run_number }}
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          provenance: true
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Record release identity
+        run: |
+          echo "artifact: ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}"
+          echo "revision: ${{ github.sha }}"
+
+  deploy-sandbox:
+    needs: build
+    runs-on: ubuntu-latest
+    # HUMAN GATE #2. The environment's required-reviewer rule stops this job until a person
+    # approves this exact run. Nothing in this repository can bypass it.
+    environment:
+      name: sandbox-prod
+    steps:
+      - name: Refuse to deploy from a runner that cannot reach the environment
+        # Sandbox-prod is a loopback-only Docker stack on the build machine, which a hosted
+        # runner cannot reach. Rather than pretend, this job records the approval and the
+        # exact command an operator runs. Approving here is the authorization; the deploy is
+        # performed against the local environment.
+        run: |
+          echo "Gate #2 approved for:"
+          echo "  ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}"
+          echo
+          echo "sandbox-prod is loopback-only on the build machine and is not reachable from a"
+          echo "hosted runner. Deploy with, on that machine:"
+          echo
+          echo "  FL_IMAGE=ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }} \\"
+          echo "  FL_VCS_REF=${{ github.sha }} \\"
+          echo "  FL_SERVICE_VERSION=${{ github.ref_name }}-${{ github.run_number }} \\"
+          echo "  FL_SESSION_SECRET=\"\$(rbw get foundation-lab-sandbox-session)\" \\"
+          echo "  docker compose -f compose.sandbox.yaml up -d"
+          echo
+          echo "Then, and only then, LIVE VERIFIED:"
+          echo "  node scripts/verify-deployment.ts http://127.0.0.1:4330"

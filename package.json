@@ -14,7 +14,8 @@
     "test:contract": "node --test \"tests/contract/*.test.ts\"",
     "test:integration": "node --test \"tests/integration/*.test.ts\"",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "evals": "node evals/incident-triage/run.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
