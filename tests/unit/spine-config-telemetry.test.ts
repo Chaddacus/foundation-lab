@@ -53,6 +53,16 @@ describe('loadConfig', () => {
     assert.notEqual(loadConfig({ FL_ENV: 'DEV', ...SECRET }).databasePath, loadConfig({ FL_ENV: 'SANDBOX', ...SECRET }).databasePath);
   });
 
+  test('defaults to loopback, so a misconfiguration cannot expose the port', () => {
+    assert.equal(loadConfig({}).bindAddress, '127.0.0.1');
+  });
+
+  test('the bind address is overridable, because a container must bind 0.0.0.0', () => {
+    // Inside a container, binding loopback makes a published port unreachable. The
+    // loopback-only guarantee moves up a level: the HOST publishes to 127.0.0.1 only.
+    assert.equal(loadConfig({ FL_BIND_ADDRESS: '0.0.0.0' }).bindAddress, '0.0.0.0');
+  });
+
   test('returns a frozen object, so nothing mutates configuration at runtime', () => {
     assert.equal(Object.isFrozen(loadConfig({})), true);
   });

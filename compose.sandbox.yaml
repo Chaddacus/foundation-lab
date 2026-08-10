@@ -1,0 +1,50 @@
+# SANDBOX (production-like) environment — one of three local Docker stacks on loopback (D2).
+#
+# NOT real customer production. It exists to prove release gates and bounded self-healing
+# safely. Deploying a release here is the Gate #2 transition and is a human decision.
+#
+# Runs the SAME artifact that a later promotion would move to sandbox-prod, identified by
+# digest. `FL_IMAGE` is required and must be a digest reference, not a tag: a tag can be
+# moved to point at different bytes, which would make "the artifact we validated" unverifiable.
+#
+# The session secret is REQUIRED and comes from the environment at launch. This file stores a
+# reference to it, never a value (SPEC §7). Supply it from the configured secret backend:
+#   FL_SESSION_SECRET="$(rbw get foundation-lab-sandbox-session)" docker compose -f compose.sandbox.yaml up -d
+# Unlocking that backend is a human act and nothing here attempts it.
+
+name: foundation-lab-sandbox
+
+services:
+  app:
+    image: ${FL_IMAGE:?set FL_IMAGE to an image DIGEST, e.g. foundation-lab@sha256:...}
+    environment:
+      FL_ENV: SANDBOX
+      FL_PORT: "4310"
+      # Binds all interfaces INSIDE the container; the published port below is loopback-only,
+      # so the service is still not reachable from the network.
+      FL_BIND_ADDRESS: 0.0.0.0
+      FL_DATABASE_PATH: /app/data/foundation-lab.sandbox.sqlite
+      FL_SERVICE_VERSION: ${FL_SERVICE_VERSION:?set FL_SERVICE_VERSION}
+      FL_VCS_REF: ${FL_VCS_REF:?set FL_VCS_REF}
+      # The running container reports the exact artifact it is, so telemetry and /api/meta
+      # can be joined to what Gate #2 authorized.
+      FL_ARTIFACT_DIGEST: ${FL_IMAGE}
+      FL_OTLP_ENDPOINT: http://host.docker.internal:4318
+      FL_SESSION_SECRET: ${FL_SESSION_SECRET:?supply from the secret backend at launch}
+    ports:
+      - "127.0.0.1:4330:4310"
+    volumes:
+      - sandbox-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  sandbox-data:
