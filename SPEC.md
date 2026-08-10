@@ -220,7 +220,17 @@ The digest is supplied at deploy time and reported by `/api/meta` and in every s
 
 **Gate #1 is mechanically enforced** by the `gate1-main` repository ruleset on `Chaddacus/foundation-lab`: pull request required, one approving review, stale reviews dismissed on push, last-push approval required, the `verify` check required, force-push and deletion blocked, and **no bypass actors**. Proven, not assumed — a direct push to `main` was attempted during setup and rejected by the server citing those rules.
 
-**Gate #2 is NOT mechanically enforced**, and this is a real limitation rather than a choice. Mechanical enforcement would be a GitHub Environment with a required reviewer, which is unavailable for private repositories on this account's plan. An environment created without that rule enforces nothing while looking like a control, so the one created during setup was verified to have zero protection rules and deleted. Gate #2 is a documented human procedure performed on the machine hosting the sandbox environment — which a hosted runner could not reach regardless, since sandbox-prod is loopback-only.
+**Automation identity.** Builder and approver are separate accounts, which is what makes Gate #1's review requirement meaningful rather than ceremonial. The `foundation-lab-bot` GitHub App (App ID 4546134) holds `contents: write` and `pull_requests: write` on this repository and nothing else — no admin, no ruleset authority, no bypass. It pushes branches, opens pull requests, and merges into `dev`. It **cannot** approve a pull request and **cannot** merge to `main`.
+
+The human approver's account never authors the changes it approves. GitHub enforces both halves of this independently of any configuration here: it refuses self-approval outright, and the `require_last_push_approval` rule means the account that made the most recent push cannot be the one that approves it. Both were confirmed by attempting them.
+
+The App's private key lives outside the repository under the operator's control. Only short-lived installation tokens — one hour — are ever used, and the durable credential is never held by automation.
+
+**Gate #2 is mechanically enforced** by the `sandbox-prod` GitHub Environment: required reviewer, and deployments restricted to protected branches. The `authorize-deploy` job cannot start until a person approves that exact run and that exact artifact digest.
+
+It authorizes rather than deploys, deliberately: sandbox-prod is loopback-only on the operator machine and unreachable from a hosted runner, so approval is the gate and the deployment is executed locally against the approved digest.
+
+This was briefly not enforceable — required-reviewer protection is unavailable for private repositories on a free plan, and an environment created without that rule exists while enforcing nothing. That empty environment was verified and deleted rather than left as a false control; the repository was then made public and the rule confirmed present before the job was restored.
 
 ## 9a. Continuous integration
 
@@ -268,7 +278,7 @@ The recorded eval suite that CI *does* run exercises validation, grounding and f
 **Platform and structure**
 
 17. **Sandbox-prod has never run.** Its stack is defined and its configuration validates, but no release has been deployed to it — that transition is Gate #2.
-18. **Gate #2 is not mechanically enforced** — required-reviewer environment protection is unavailable for private repositories on this account's plan. It is a documented human procedure. Closing this needs either a public repository or a paid plan.
+18. **The repository is public.** Nothing secret has ever been committed — full history was scanned — but the LOCAL seed passwords and test fixture secrets are now visible. They apply only to a loopback environment with synthetic data, and DEV and SANDBOX refuse to start without a secret supplied at runtime.
 19. **Live evals, Elastic correlation and deployment verification do not run in CI** and depend on a human running them locally. Their evidence is attached to gate packets rather than produced by an independent system.
 20. **Rollback is written but untested**, because there is no previous artifact to roll back to.
 21. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design.
