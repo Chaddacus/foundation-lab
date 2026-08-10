@@ -1,75 +1,41 @@
 # Human Gate #2 Packet — main → sandbox-prod
 
-**Decision requested:** authorize exact artifact
-`foundation-lab@sha256:a56ad282e6afa2b9e985a2c1db61effe950b0ab2b37e7d92e351c5340bf4209a`
-to deploy to the sandbox production-like environment.
-**Requested:** 2026-08-10 · **Requested by:** foundation-lab-bot (builder identity; not the approver)
+**Decision requested:** authorize one exact artifact digest to deploy to the sandbox production-like environment.
+**Requested by:** foundation-lab-bot (builder identity; not the approver)
 
-> **This packet is NOT yet actionable.** It depends on Gate #1, which has not been granted.
-> The artifact below was built from `dev`; `main` does not yet contain this revision. It is
-> prepared now so both decisions can be seen together, and it MUST be re-grounded and
-> re-issued against the true `main` head once Gate #1 is approved.
+> **The digest is deliberately not filled in here.** Gate #2 binds to an exact artifact, and the artifact is produced by the release run this gate belongs to. A packet naming a digest written in advance would be approving bytes that did not exist when it was written. The `authorize-deploy` job names the digest in its own output; approve there.
+
+## How this gate is enforced
+
+The `sandbox-prod` GitHub Environment carries `required_reviewers` and a protected-branch policy, verified present via the API rather than assumed. The `authorize-deploy` job cannot start until a person approves that exact run.
+
+It fired for the first time on run `31389073928` and correctly blocked, waiting on the human reviewer. That run was cancelled: it had been dispatched to verify the build, and a feature-branch artifact is not a deployment decision.
 
 ## The artifact
 
-- Source: `dev` @ `05f1e93191311e4fd6113ab2f07be9195ad32d17` — **pending** promotion to `main` under Gate #1.
-- Artifact: `sha256:a56ad282e6afa2b9e985a2c1db61effe950b0ab2b37e7d92e351c5340bf4209a`
-  — built once, from a clean tree, base image pinned by digest. This is the same artifact
-  currently validated in DEV; no rebuild happens for the sandbox deployment.
-- Provenance/attestation: **not supported in this setup.** Images are local to this Docker
-  daemon with no registry and no signing. The digest is a content address, which gives
-  immutability but not attestation of who built it.
+- Built once by `release.yml` from `main`, addressed by **digest**, never by tag — a tag can be repointed at different bytes.
+- The base image is pinned by digest, and the build refuses a dirty working tree.
+- **Provenance attestation is produced** (`actions/attest-build-provenance`), so the artifact carries proof of what built it and from where. An earlier version of this packet said attestation was "not supported in this setup"; that was true before the release workflow existed and is now false.
 
-## Evidence
+## Evidence available at approval time
 
-- **`main` CI:** none exists. There is no CI in this repository — verification runs locally
-  and its commands are declared in `.claude/verification.json`. That is a genuine gap for a
-  promotion gate and is stated rather than glossed.
-- **DEV validation of this artifact:** deployed at 127.0.0.1:4320; `/api/meta` on the live
-  deployment reports this exact digest; sign-in, project creation and listing exercised
-  against it; DEV spans confirmed in Elastic carrying the digest, revision and version.
-- **Sandbox pre-flight:** the environment has **never run**. There is no current live version,
-  no health history, and no in-flight incidents — because there is nothing deployed. First
-  deployment is therefore also first exposure.
+- **`main` CI:** `verify.yml` runs on every push and pull request to `main` — types, 268 node tests, 44 browser tests, and the recorded AI eval suite. An earlier version of this packet said "there is no CI in this repository"; that is no longer true.
+- **The build job's own output** names the digest and source revision.
+- **DEV validation:** the DEV environment runs a previously built artifact and reports its digest at `/api/meta`. Confirm the digest under approval has been exercised in DEV before approving it for sandbox.
 
-## Backup & rollback
+## What is genuinely still weak
 
-- **Fresh backup: none exists, and none is possible.** Sandbox has no data to back up before
-  its first deployment. From the second deployment onward the SQLite volume
-  `foundation-lab-sandbox_sandbox-data` is the thing to snapshot, and that procedure does not
-  yet exist.
-- **Rollback path:** redeploy the previous artifact digest by setting `FL_IMAGE` and running
-  `docker compose -f compose.sandbox.yaml up -d`. Estimated under a minute. **Untested** —
-  there is no previous artifact to roll back to.
+1. **Sandbox-prod has never run.** Its first deployment is also its first exposure; any environment-specific defect surfaces then.
+2. **Rollback is written but untested**, because no previous artifact has ever been deployed there to roll back to.
+3. **No backup exists or can exist** before the first deployment. From the second onward, the SQLite volume `foundation-lab-sandbox_sandbox-data` is what to snapshot, and that procedure does not yet exist.
+4. **No metrics are exported**, so post-deployment health rests on traces, logs and manual checks.
+5. The sandbox is production-*like*. It holds no real data, which is what makes exercising this gate safe at all.
 
-## Deployment plan
+## Deployment, after approval
 
-1. Confirm Gate #1 approved and `main` contains `05f1e93191311e4fd6113ab2f07be9195ad32d17`.
-2. Re-issue this packet against the true `main` head.
-3. Supply `FL_SESSION_SECRET` from the secret backend at launch (a human act; nothing here
-   unlocks it), plus `FL_IMAGE`, `FL_VCS_REF` and `FL_SERVICE_VERSION`.
-4. `docker compose -f compose.sandbox.yaml up -d` — loopback-only on 127.0.0.1:4330.
-5. Provision the first tenant with `scripts/provision.ts` inside the container.
-6. Post-deploy verification: confirm `/api/meta` reports this exact digest; run the FAST tier
-   against the deployment; confirm SANDBOX-tagged telemetry reaches Elastic.
-7. LIVE VERIFIED is declared only after that evidence passes — not at deploy time.
+`authorize-deploy` authorizes rather than deploys: sandbox-prod is loopback-only on the operator machine and unreachable from a hosted runner. The job prints the exact command, which uses the approved digest and takes the session secret from the secret backend at launch — unlocking that backend is a human act and nothing in this repository attempts it.
 
-## Risks & unknowns
-
-1. **No CI.** Nothing independently re-verifies the artifact outside this machine.
-2. **No attestation.** The digest proves immutability, not authorship.
-3. **No tested rollback.** The procedure is written but has never been executed.
-4. **First deployment to an environment that has never run.** Any environment-specific defect
-   surfaces here for the first time.
-5. **No metrics**, so post-deployment health rests on traces, logs and manual checks.
-6. The sandbox is production-*like*, not production. It holds no real data, which lowers the
-   consequence of every risk above — and is the reason this gate is safe to exercise at all.
-
-## What YES means
-
-This exact artifact deploys to sandbox-prod in the stated window. LIVE VERIFIED is declared
-only after live evidence passes.
+**LIVE VERIFIED is declared only after** `node scripts/verify-deployment.ts http://127.0.0.1:4330` passes, which checks that the running deployment reports the exact digest that was approved. Deploying is not verifying.
 
 ---
-**Approval record:** _(unsigned — not actionable until Gate #1 is granted and this packet is
-re-issued against the true `main` head)_
+**Approval record:** _(the approval is the environment approval on the release run; this document is its basis)_

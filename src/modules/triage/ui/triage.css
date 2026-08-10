@@ -67,8 +67,6 @@
   border-color: var(--color-border);
 }
 
-.incidents-form { max-width: 40rem; }
-
 /* A <select> sizes itself to its widest option by default, so the long severity labels
  * pushed the whole document wide at 375px. Constrained like every other field control. */
 .field select {
