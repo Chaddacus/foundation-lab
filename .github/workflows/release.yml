@@ -1,24 +1,29 @@
-# Release — build once, then promote the same artifact.
+# Release — build once, so the same artifact can be promoted.
 #
-# Two jobs with a human decision between them:
-#   build   runs on main, produces ONE artifact, pushes it to GHCR by digest.
-#   deploy  requires the `sandbox-prod` environment, whose reviewer requirement IS Human
-#           Gate #2. The job cannot start until a human approves it. That is enforced by
-#           GitHub, not by this file, and not by anything in Claude's configuration.
+# This workflow BUILDS ONLY. It does not deploy, and it deliberately contains no job that
+# looks like a deployment gate.
 #
-# The artifact is identified by DIGEST throughout. A tag can be repointed at different
-# bytes, so a tag-based promotion would make "the artifact we approved" unverifiable.
+# Why: mechanical Gate #2 would be a GitHub Environment with a required reviewer, and that
+# protection rule is not available for private repositories on this account's plan. An
+# environment created without it exists but enforces NOTHING — a control that looks real and
+# is not, which is worse than an openly manual step. One was created during setup, verified
+# to have zero protection rules, and deleted for that reason.
+#
+# Gate #2 is therefore a documented human procedure (docs/release/gate-2-packet.md) performed
+# on the machine that hosts the sandbox environment — which a hosted runner cannot reach in
+# any case, since sandbox-prod is loopback-only. The gap is recorded in SPEC §10 rather than
+# papered over.
+#
+# The artifact is identified by DIGEST throughout. A tag can be repointed at different bytes,
+# so a tag-based promotion would make "the artifact we approved" unverifiable.
 
 name: release
 
 on:
   push:
     branches: [main]
+  # Dispatchable so the build can be exercised without waiting for a promotion to main.
   workflow_dispatch:
-    inputs:
-      digest:
-        description: 'Artifact digest to deploy (omit to deploy the digest just built)'
-        required: false
 
 permissions:
   contents: read
@@ -75,31 +80,21 @@ jobs:
           echo "artifact: ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}"
           echo "revision: ${{ github.sha }}"
 
-  deploy-sandbox:
-    needs: build
-    runs-on: ubuntu-latest
-    # HUMAN GATE #2. The environment's required-reviewer rule stops this job until a person
-    # approves this exact run. Nothing in this repository can bypass it.
-    environment:
-      name: sandbox-prod
-    steps:
-      - name: Refuse to deploy from a runner that cannot reach the environment
-        # Sandbox-prod is a loopback-only Docker stack on the build machine, which a hosted
-        # runner cannot reach. Rather than pretend, this job records the approval and the
-        # exact command an operator runs. Approving here is the authorization; the deploy is
-        # performed against the local environment.
+      - name: Print the Gate #2 procedure
         run: |
-          echo "Gate #2 approved for:"
-          echo "  ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}"
+          echo "Artifact built and attested:"
+          echo "  ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}"
+          echo "  revision ${{ github.sha }}"
           echo
-          echo "sandbox-prod is loopback-only on the build machine and is not reachable from a"
-          echo "hosted runner. Deploy with, on that machine:"
+          echo "This workflow does NOT deploy. Promotion to sandbox-prod is Human Gate #2,"
+          echo "performed on the machine hosting that environment, per"
+          echo "docs/release/gate-2-packet.md. After approval, on that machine:"
           echo
-          echo "  FL_IMAGE=ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }} \\"
+          echo "  FL_IMAGE=ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }} \\"
           echo "  FL_VCS_REF=${{ github.sha }} \\"
           echo "  FL_SERVICE_VERSION=${{ github.ref_name }}-${{ github.run_number }} \\"
           echo "  FL_SESSION_SECRET=\"\$(rbw get foundation-lab-sandbox-session)\" \\"
           echo "  docker compose -f compose.sandbox.yaml up -d"
           echo
-          echo "Then, and only then, LIVE VERIFIED:"
+          echo "LIVE VERIFIED is declared only after:"
           echo "  node scripts/verify-deployment.ts http://127.0.0.1:4330"
