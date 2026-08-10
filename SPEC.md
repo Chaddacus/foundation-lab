@@ -1,6 +1,6 @@
 # SPEC.md — Foundation Lab
 
-**Status:** slice 4 complete (project archive, built through the parallel-worktree journey). This file is the canonical current specification for this repository. Documentation under `docs/` is subordinate to it. Historical plans and handoffs do not outrank this file or the live system.
+**Status:** slice 5 complete (release artifact identity, DEV deployed and validated, sandbox-prod defined). Awaiting Human Gate #1. This file is the canonical current specification for this repository. Documentation under `docs/` is subordinate to it. Historical plans and handoffs do not outrank this file or the live system.
 
 ## 1. Purpose
 
@@ -194,9 +194,29 @@ OpenTelemetry to the local collector, then Elastic.
 
 Health checks and FAST synthetics are separate concerns from instrumentation and do not substitute for it.
 
-## 9. Environments
+## 9. Environments and release identity
 
-Local, DEV, and a sandbox production-like environment — three local Docker stacks on loopback, colocated with the Elastic stack. The sandbox is not real customer production; it exists to prove release gates and bounded self-healing safely. DEV and sandbox ship in slice 5.
+Three local Docker stacks on loopback, colocated with the Elastic stack:
+
+| Environment | Port | State |
+|---|---|---|
+| LOCAL | 4310 | run from source; ephemeral session secret |
+| DEV | 4320 | deployed and validated |
+| SANDBOX | 4330 | defined and config-validated; **never deployed** — that is Gate #2 |
+
+The sandbox is not real customer production. It exists to prove release gates and bounded self-healing safely.
+
+**Release identity.** Build once, promote the same artifact. The identity is the image **digest**, not a tag — a tag can be repointed at different bytes. The base image is pinned by digest for the same reason, and the build refuses a dirty working tree, because a stamped revision that does not describe the contents ties the artifact to nothing.
+
+The digest is supplied at deploy time and reported by `/api/meta` and in every span, so a running deployment always states which artifact it actually is. That claim is verified, not assumed: the live DEV deployment reports the exact digest that was built.
+
+**Container posture:** non-root, read-only root filesystem, `no-new-privileges`, all capabilities dropped, published to `127.0.0.1` only. The process binds `0.0.0.0` *inside* its container — otherwise the published port is unreachable — and the loopback-only guarantee is held one level up by the host publish address.
+
+**No `HEALTHCHECK`.** A health check is a liveness signal and is not verification; conflating them would let a container that merely responds look like a validated release.
+
+**Secrets:** both stacks require `FL_SESSION_SECRET` at launch and refuse to start without it. The compose files hold a reference, never a value. Unlocking the backend is a human act.
+
+**Promotion gates.** `dev → main` is Gate #1; `main → sandbox-prod` is Gate #2. Both are human decisions. Packets: `docs/release/gate-1-packet.md`, `docs/release/gate-2-packet.md`.
 
 ## 10. Known limitations (current, honest)
 
@@ -227,11 +247,13 @@ Local, DEV, and a sandbox production-like environment — three local Docker sta
 
 **Platform and structure**
 
-17. Only the local environment exists. Slice 5.
-18. No release artifact identity or promotion path yet. `vcsRef` and `artifactDigest` default to the labels `unknown` and `unbuilt`. Slice 5.
-19. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design through slice 5.
-20. Browser proof runs on Chromium only. No browser support matrix is declared, so behavior in other engines is untested.
-21. The spine's static mount still reaches into each module's internal `ui/` directory, and `buildApp` is edited in four places per module. With five modules the repetition is real; a module registry is the first refactor of slice 5.
+17. **Sandbox-prod has never run.** Its stack is defined and its configuration validates, but no release has been deployed to it — that transition is Gate #2.
+18. **There is no CI.** Verification runs locally only, so nothing independently re-verifies an artifact outside this machine. A real gap for a promotion gate.
+19. **No build attestation.** The digest gives immutability, not proof of authorship. No registry and no signing.
+20. **Rollback is written but untested**, because there is no previous artifact to roll back to.
+21. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design.
+22. Browser proof runs on Chromium only. No browser support matrix is declared, so behavior in other engines is untested.
+23. The spine's static mount still reaches into each module's internal `ui/` directory, and `buildApp` is edited in four places per module. With five modules the repetition is real; a module registry is the first refactor of slice 5.
 
 ### Provenance of this list
 

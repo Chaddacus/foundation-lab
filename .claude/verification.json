@@ -143,5 +143,21 @@
       "command": "npx playwright test",
       "browser": true
     }
-  ]
+  ],
+  "deployment": {
+    "$comment": "Run against a DEPLOYED environment, not a source tree. The base URL is the environment under test; these prove the deployment is the artifact that was authorized and that it works.",
+    "dev": [
+      {
+        "name": "artifact-identity",
+        "$comment": "The live deployment must report the exact digest that was deployed. A mismatch means something other than the authorized artifact is running.",
+        "command": "node scripts/verify-deployment.ts http://127.0.0.1:4320"
+      }
+    ],
+    "sandbox": [
+      {
+        "name": "artifact-identity",
+        "command": "node scripts/verify-deployment.ts http://127.0.0.1:4330"
+      }
+    ]
+  }
 }
