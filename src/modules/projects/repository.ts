@@ -91,6 +91,13 @@ export class ProjectsRepository {
     return rows.map(toProject);
   }
 
+  /** Sets the lifecycle status. Separate from `update` because it changes state, not content. */
+  updateStatus(id: string, status: string, updatedAt: string): void {
+    this.#db
+      .prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?')
+      .run(status, updatedAt, id);
+  }
+
   /** Writes the already-validated fields. Callers pass a fully resolved row state. */
   update(id: string, fields: { name: string; description: string; updatedAt: string }): void {
     this.#db
