@@ -171,7 +171,10 @@ function renderList(state, projects = [], error = null) {
       <table class="data-table" data-testid="project-list">
         <caption class="visually-hidden">Projects, newest first</caption>
         <thead>
-          <tr><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Releases</th></tr>
+          <tr>
+            <th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th>
+            <th scope="col">Releases</th><th scope="col">Archive</th>
+          </tr>
         </thead>
         <tbody>
           ${projects.map((project) => `
@@ -184,10 +187,20 @@ function renderList(state, projects = [], error = null) {
                           data-project-id="${escapeHtml(project.id)}">
                     View releases<span class="visually-hidden"> for ${escapeHtml(project.name)}</span>
                   </button></td>
+              <td>${project.status === 'archived'
+                ? '<span class="text-muted" data-testid="archive-unavailable">archived</span>'
+                : `<button type="button" class="control control--danger" data-testid="archive-project"
+                            data-project-id="${escapeHtml(project.id)}" data-project-name="${escapeHtml(project.name)}">
+                      Archive<span class="visually-hidden"> ${escapeHtml(project.name)}</span>
+                    </button>`}</td>
             </tr>`).join('')}
         </tbody>
       </table>
       </div>`;
+
+    for (const button of content.querySelectorAll('[data-testid="archive-project"]')) {
+      button.addEventListener('click', () => void confirmArchive(button));
+    }
 
     for (const button of content.querySelectorAll('[data-testid="select-project"]')) {
       button.addEventListener('click', () => {
@@ -212,6 +225,47 @@ function renderList(state, projects = [], error = null) {
   status.textContent = error?.reference
     ? `${messages[state]} Reference: ${error.reference}`
     : messages[state];
+}
+
+/**
+ * Ask before archiving.
+ *
+ * Risk determines friction (Standard 10). Creating a project is reversible and needs none;
+ * archiving cannot be undone, so it gets an explicit confirmation naming the project. The
+ * prompt states the consequence — no longer editable, cannot be restored — rather than
+ * asking a bare "are you sure", which trains people to click through.
+ */
+async function confirmArchive(button) {
+  const name = button.dataset.projectName;
+  const confirmed = window.confirm(
+    `Archive "${name}"?\n\n`
+    + 'An archived project can no longer be edited, and archiving cannot be undone.',
+  );
+  if (!confirmed) return;
+
+  const summary = root.querySelector('[data-testid="form-summary"]');
+  summary.hidden = true;
+
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = 'Archiving…';
+
+  try {
+    await callApi(`${API}/${encodeURIComponent(button.dataset.projectId)}/archive`, { method: 'POST', body: '{}' });
+    await loadProjects();
+
+    summary.hidden = false;
+    summary.className = 'form-summary status-success';
+    summary.textContent = `Archived "${name}".`;
+  } catch (error) {
+    summary.hidden = false;
+    summary.className = 'form-summary status-error';
+    summary.textContent = error.reference ? `${error.message} Reference: ${error.reference}` : error.message;
+
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    button.textContent = 'Archive';
+  }
 }
 
 async function loadProjects() {

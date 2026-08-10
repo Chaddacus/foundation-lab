@@ -54,5 +54,14 @@ export function projectsRoutes(projects: ProjectsCapability): readonly Route[] {
       handler: ({ actor, params, body }) =>
         projects.updateProject(actor, params.id, body as UpdateProjectInput),
     },
+    {
+      // POST, not DELETE: archiving is a state transition, not a deletion, and the record
+      // survives. A DELETE would tell every client the wrong thing about what happened.
+      method: 'POST',
+      pattern: '/api/projects/:id/archive',
+      module: MODULE,
+      operation: 'archiveProject',
+      handler: ({ actor, params }) => projects.archiveProject(actor, params.id),
+    },
   ];
 }

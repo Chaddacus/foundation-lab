@@ -12,7 +12,7 @@
  */
 
 import { AppError } from '../../spine/errors.ts';
-import type { CreateProjectInput, UpdateProjectInput } from './contract.ts';
+import type { CreateProjectInput, ProjectStatus, UpdateProjectInput } from './contract.ts';
 
 export const NAME_MAX_LENGTH = 120;
 export const DESCRIPTION_MAX_LENGTH = 2000;
@@ -96,4 +96,30 @@ export function normalizeUpdate(input: UpdateProjectInput): Partial<NormalizedCr
   }
 
   return changes;
+}
+
+/**
+ * Check that a project may be archived.
+ *
+ * Raises `conflict` rather than `validation`: the request is well formed, the project is
+ * simply not in a state where archiving applies. That distinction tells a client whether
+ * retrying could ever help.
+ */
+export function assertArchivable(status: ProjectStatus): void {
+  if (status === 'archived') {
+    throw AppError.conflict('This project is already archived.');
+  }
+}
+
+/**
+ * Check that a project may still be edited.
+ *
+ * An archived project is a closed record. Allowing edits would make "archived" mean
+ * nothing, and would let a project change under someone who archived it precisely to stop
+ * that happening.
+ */
+export function assertEditable(status: ProjectStatus): void {
+  if (status === 'archived') {
+    throw AppError.conflict('This project is archived and can no longer be edited.');
+  }
 }

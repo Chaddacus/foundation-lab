@@ -1,3 +1,7 @@
+# Both forms: the trailing-slash pattern does NOT match a SYMLINK named node_modules, which
+# is how worktrees share one install — and how an absolute-path symlink was briefly
+# committed. A symlink to /Users/... would break on any other machine.
+node_modules
 node_modules/
 data/
 *.sqlite

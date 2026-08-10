@@ -19,7 +19,7 @@ import type {
   ProjectsCapability,
   UpdateProjectInput,
 } from './contract.ts';
-import { normalizeCreate, normalizeUpdate } from './domain.ts';
+import { assertArchivable, assertEditable, normalizeCreate, normalizeUpdate } from './domain.ts';
 import type { ProjectsRepository } from './repository.ts';
 
 /** Injected so tests can freeze time and ids, and assert on exact stored values. */
@@ -66,6 +66,23 @@ export class ProjectsService implements ProjectsCapability {
   constructor(repository: ProjectsRepository, clock: ServiceClock = systemClock) {
     this.#repository = repository;
     this.#clock = clock;
+  }
+
+  /**
+   * Archive a project.
+   *
+   * Reads through `getProject`, so the tenant check is the same code the read path uses —
+   * a cross-tenant id fails as `not_found` before anything is written, and there is no
+   * second implementation to drift.
+   */
+  archiveProject(actor: Actor, id: string): Project {
+    const existing = this.getProject(actor, id);
+    assertArchivable(existing.status);
+
+    const updatedAt = this.#clock.now();
+    this.#repository.updateStatus(id, 'archived', updatedAt);
+
+    return { ...existing, status: 'archived', updatedAt };
   }
 
   /**
@@ -135,6 +152,7 @@ export class ProjectsService implements ProjectsCapability {
     // same code that applies it on the read path — there is no second implementation to
     // drift. A cross-tenant id therefore fails as not_found before any mutation.
     const existing = this.getProject(actor, id);
+    assertEditable(existing.status);
     const changes = normalizeUpdate(input);
 
     const updated: Project = {

@@ -8,7 +8,10 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeCreate, normalizeUpdate, NAME_MAX_LENGTH, DESCRIPTION_MAX_LENGTH } from '../../src/modules/projects/domain.ts';
+import {
+  assertArchivable, assertEditable, normalizeCreate, normalizeUpdate,
+  NAME_MAX_LENGTH, DESCRIPTION_MAX_LENGTH,
+} from '../../src/modules/projects/domain.ts';
 import { AppError } from '../../src/spine/errors.ts';
 
 describe('normalizeCreate', () => {
@@ -74,5 +77,40 @@ describe('normalizeUpdate', () => {
 
   test('rejects clearing the name, which is required', () => {
     assert.throws(() => normalizeUpdate({ name: '  ' }));
+  });
+});
+
+describe('archive lifecycle rules', () => {
+  test('an active project may be archived', () => {
+    assert.doesNotThrow(() => assertArchivable('active'));
+  });
+
+  test('archiving an already-archived project is a conflict, not a silent success', () => {
+    // A caller must be able to tell whether ITS action was the one that took effect.
+    assert.throws(
+      () => assertArchivable('archived'),
+      (error: AppError) => error.kind === 'conflict' && /already archived/.test(error.message),
+    );
+  });
+
+  test('an active project may be edited', () => {
+    assert.doesNotThrow(() => assertEditable('active'));
+  });
+
+  test('an archived project may not be edited', () => {
+    // Otherwise "archived" means nothing, and a project could change under someone who
+    // archived it precisely to stop that happening.
+    assert.throws(
+      () => assertEditable('archived'),
+      (error: AppError) => error.kind === 'conflict',
+    );
+  });
+
+  test('the two rules are distinct — archivable is not editable', () => {
+    // They are separate checks on purpose: an active project is both, an archived project
+    // is neither, and collapsing them would let one change silently alter the other.
+    assert.doesNotThrow(() => assertArchivable('active'));
+    assert.throws(() => assertEditable('archived'));
+    assert.throws(() => assertArchivable('archived'));
   });
 });

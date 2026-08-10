@@ -136,6 +136,69 @@ describe('updating projects', () => {
   });
 });
 
+describe('archiving', () => {
+  test('archiving changes the stored status and the updated timestamp', () => {
+    const created = service.createProject(actor, { name: 'Apollo' });
+    clock.advance('2026-08-10T09:00:00.000Z');
+
+    const archived = service.archiveProject(actor, created.id);
+
+    assert.equal(archived.status, 'archived');
+    assert.equal(archived.updatedAt, '2026-08-10T09:00:00.000Z');
+    assert.equal(service.getProject(actor, created.id).status, 'archived');
+  });
+
+  test('archiving preserves everything except status and timestamp', () => {
+    const created = service.createProject(actor, { name: 'Apollo', description: 'Lunar' });
+    const archived = service.archiveProject(actor, created.id);
+
+    assert.equal(archived.name, created.name);
+    assert.equal(archived.description, created.description);
+    assert.equal(archived.customerId, created.customerId);
+    assert.equal(archived.createdAt, created.createdAt);
+  });
+
+  test('archiving twice is refused and the second attempt changes nothing', () => {
+    const created = service.createProject(actor, { name: 'Apollo' });
+    service.archiveProject(actor, created.id);
+    clock.advance('2026-08-10T10:00:00.000Z');
+
+    assert.throws(
+      () => service.archiveProject(actor, created.id),
+      (error: AppError) => error.kind === 'conflict',
+    );
+    // The refused attempt must not have touched the record.
+    assert.notEqual(service.getProject(actor, created.id).updatedAt, '2026-08-10T10:00:00.000Z');
+  });
+
+  test('an archived project cannot be edited', () => {
+    const created = service.createProject(actor, { name: 'Apollo' });
+    service.archiveProject(actor, created.id);
+
+    assert.throws(
+      () => service.updateProject(actor, created.id, { name: 'Renamed' }),
+      (error: AppError) => error.kind === 'conflict',
+    );
+    assert.equal(service.getProject(actor, created.id).name, 'Apollo');
+  });
+
+  test('archiving an unknown id is not_found, not conflict', () => {
+    assert.throws(
+      () => service.archiveProject(actor, 'missing'),
+      (error: AppError) => error.kind === 'not_found',
+    );
+  });
+
+  test('archived projects still appear in the list', () => {
+    // They remain the customer's records. Hiding them would make an archived project look
+    // deleted, which it is not.
+    const created = service.createProject(actor, { name: 'Apollo' });
+    service.archiveProject(actor, created.id);
+
+    assert.deepEqual(service.listProjects(actor).map((p) => p.status), ['archived']);
+  });
+});
+
 describe('schema constraints', () => {
   test('the database itself refuses an invalid lifecycle status', () => {
     assert.throws(() => db.exec(
@@ -144,7 +207,12 @@ describe('schema constraints', () => {
     ));
   });
 
-  test('archiveProject is absent by design in slice 1 — the archive journey is slice 4', () => {
-    assert.equal('archiveProject' in service, false);
+  test('the database accepts the archived status the lifecycle now uses', () => {
+    // The CHECK constraint has permitted 'archived' since slice 1, which is why adding the
+    // capability was a behavior change rather than a migration.
+    assert.doesNotThrow(() => db.exec(
+      `INSERT INTO projects (id, name, description, customer_id, status, created_at, updated_at)
+       VALUES ('x','n','','c','archived','t','t')`,
+    ));
   });
 });
