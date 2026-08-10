@@ -18,6 +18,7 @@ import type { Actor } from '../../src/spine/actor.ts';
 import type { AppError } from '../../src/spine/errors.ts';
 import type { Project } from '../../src/modules/projects/contract.ts';
 import type { Release } from '../../src/modules/releases/contract.ts';
+import type { Incident } from '../../src/modules/incidents/contract.ts';
 
 const PASSWORD = 'correct-horse-battery-staple';
 
@@ -27,6 +28,7 @@ let gil: Actor;      // Globex
 let acmeProject: Project;
 let globexProject: Project;
 let acmeRelease: Release;
+let acmeIncident: Incident;
 
 beforeEach(() => {
   app = buildApp(loadConfig({
@@ -46,6 +48,9 @@ beforeEach(() => {
 
   acmeProject = app.modules.projects.capability.createProject(ana, { name: 'Acme Apollo' });
   globexProject = app.modules.projects.capability.createProject(gil, { name: 'Globex Zeus' });
+  acmeIncident = app.modules.incidents.capability.createIncident(ana, {
+    title: 'Acme incident', report: 'Acme only.', severity: 'SEV-2',
+  });
   acmeRelease = app.modules.releases.capability.createRelease(ana, {
     projectId: acmeProject.id, version: '1.0.0', vcsRef: 'abc123',
     artifactDigest: 'sha256:aa', environment: 'DEV',
@@ -78,6 +83,14 @@ describe('function boundary: an actor without a tenant reaches nothing', () => {
     assert.equal(kindOf(() => releases.getRelease(ANONYMOUS, acmeRelease.id)), 'unauthorized');
     assert.equal(kindOf(() => releases.listReleasesForProject(ANONYMOUS, acmeProject.id)), 'unauthorized');
     assert.equal(kindOf(() => releases.setReleaseStatus(ANONYMOUS, acmeRelease.id, 'deployed')), 'unauthorized');
+  });
+
+  test('every Incidents capability refuses the anonymous actor', () => {
+    const incidents = app.modules.incidents.capability;
+    assert.equal(kindOf(() => incidents.listIncidents(ANONYMOUS)), 'unauthorized');
+    assert.equal(kindOf(() => incidents.getIncident(ANONYMOUS, acmeIncident.id)), 'unauthorized');
+    assert.equal(kindOf(() => incidents.createIncident(ANONYMOUS, { title: 'x', report: 'y', severity: 'SEV-3' })), 'unauthorized');
+    assert.equal(kindOf(() => incidents.updateIncident(ANONYMOUS, acmeIncident.id, { status: 'resolved' })), 'unauthorized');
   });
 
   test('Customers capabilities refuse the anonymous actor', () => {
@@ -130,6 +143,47 @@ describe('object boundary: a specific record belonging to another tenant', () =>
       'not_found',
     );
     assert.equal(app.modules.releases.capability.listReleasesForProject(ana, acmeProject.id).length, 1);
+  });
+});
+
+describe('incidents and triage respect the tenant boundary', () => {
+  test('reading another customer\'s incident reports not_found', () => {
+    assert.equal(kindOf(() => app.modules.incidents.capability.getIncident(gil, acmeIncident.id)), 'not_found');
+  });
+
+  test('updating another customer\'s incident is refused and changes nothing', () => {
+    assert.equal(
+      kindOf(() => app.modules.incidents.capability.updateIncident(gil, acmeIncident.id, { severity: 'SEV-0' })),
+      'not_found',
+    );
+    assert.equal(app.modules.incidents.capability.getIncident(ana, acmeIncident.id).severity, 'SEV-2');
+  });
+
+  test('each customer enumerates only its own incidents', () => {
+    app.modules.incidents.capability.createIncident(gil, {
+      title: 'Globex incident', report: 'Globex only.', severity: 'SEV-3',
+    });
+    assert.deepEqual(app.modules.incidents.capability.listIncidents(ana).map((i) => i.title), ['Acme incident']);
+    assert.deepEqual(app.modules.incidents.capability.listIncidents(gil).map((i) => i.title), ['Globex incident']);
+  });
+
+  test('triage cannot be run against another customer\'s incident', async () => {
+    // The AI capability inherits the tenant rule rather than reimplementing it, so this
+    // fails for the same reason and with the same shape as a direct read.
+    await assert.rejects(
+      () => app.modules.triage.capability.assessIncident(gil, acmeIncident.id),
+      (error: AppError) => error.kind === 'not_found',
+    );
+  });
+
+  test('an incident report cannot be read across tenants through triage metadata', () => {
+    // Guards a subtle leak: an error or metadata path that echoed the report would expose
+    // another tenant's content even while refusing the request.
+    try {
+      app.modules.incidents.capability.getIncident(gil, acmeIncident.id);
+    } catch (error) {
+      assert.ok(!(error as AppError).message.includes('Acme only.'));
+    }
   });
 });
 

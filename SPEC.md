@@ -1,6 +1,6 @@
 # SPEC.md — Foundation Lab
 
-**Status:** slice 2 in progress (Customers, Releases, authorization). This file is the canonical current specification for this repository. Documentation under `docs/` is subordinate to it. Historical plans and handoffs do not outrank this file or the live system.
+**Status:** slice 3 in progress (Incidents, AI Incident Triage). This file is the canonical current specification for this repository. Documentation under `docs/` is subordinate to it. Historical plans and handoffs do not outrank this file or the live system.
 
 ## 1. Purpose
 
@@ -17,8 +17,8 @@ Capability modules, in build order:
 | Projects | 1 | built; tenant-authorized in slice 2 |
 | Customers | 2 | built |
 | Releases | 2 | built |
-| Incidents | 3 | not started |
-| AI Triage (Incident Triage) | 3 | not started |
+| Incidents | 3 | built |
+| AI Triage (Incident Triage) | 3 | built, evaluated |
 
 Slice plan ratified 2026-08-09. A checkpoint with the human approver follows slice 1.
 
@@ -33,6 +33,8 @@ src/
     customers/    customers, users, authentication, sessions
     projects/     project lifecycle
     releases/     release candidates and their lifecycle
+    incidents/    operational incidents, with an Elastic Case reference
+    triage/       AI incident assessment (no storage of its own)
   web/            application shell served by the spine
 tests/
   unit/           pure rules
@@ -112,6 +114,30 @@ Release lifecycle: `pending` → `deployed` → (`verified` \| `rolled_back`). `
 
 Releases does **not** read the projects table. It calls `ProjectsCapability.getProject`, which already applies the tenant rule, so that rule has exactly one owner.
 
+### 4.3 Incidents (`src/modules/incidents/`)
+
+Owned data: the `incidents` table.
+
+| Capability | Notes |
+|---|---|
+| `createIncident` | title, free-text report, severity of record |
+| `getIncident` / `listIncidents` | caller's tenant only |
+| `updateIncident` | the ONLY path that changes severity or status of record |
+
+`caseRef` holds an Elastic Case identifier and is nullable — `null` means "no Case yet", not "unknown". **Incidents are stored here, not read live from Kibana** (decision, 2026-08-10): the live Cases wiring lands with the Phase 12 drills, where Cases-as-incident-truth is what gets exercised. Storing a reference now makes that an adapter change rather than a remodelling.
+
+A resolved incident cannot be reopened; the transition is refused rather than silently allowed.
+
+### 4.4 Incident Triage (`src/modules/triage/`)
+
+An AI capability with **no storage of its own** and no MCP tool. Contract: `docs/ai-capability-incident-triage.md`. Eval suite: `docs/eval-suite-incident-triage.md`.
+
+`assessIncident` returns either a fully validated assessment or `unavailable` with a reason — never anything partial. **It cannot change an incident.** Severity and status of record move only through the Incidents capability, so the model proposes and deterministic software disposes.
+
+Authorization is inherited, not reimplemented: the incident lookup happens before the prompt is composed, so a caller who cannot see an incident cannot even cause a model call.
+
+Deliberately not exposed over MCP: an MCP client able to invoke triage could spend the subscription budget this capability is metered against, and that would need its own budget authority.
+
 ## 5. Data ownership and storage
 
 SQLite via the built-in `node:sqlite` module. One file per environment, path from configuration. Chosen because it is real persistent storage with zero added dependency.
@@ -141,6 +167,15 @@ Meaningful frontend work requires browser-grounded proof, and the evidence must 
 - **Login cost is bounded** per email address, for unknown addresses as well as known ones — scrypt blocks Node's only thread, so unbounded hashing was a denial-of-service path. See §10 for what remains unbounded.
 - **Session secret:** LOCAL generates an ephemeral key at startup; DEV and SANDBOX **refuse to start** without one supplied at runtime from the secret backend. There is no default key.
 - **Repository permissions:** the working copy is `chmod 700`. `/Users/Shared` is world-readable by default on macOS.
+
+## 7a. AI engineering
+
+- **Gateway seam:** `src/spine/ai-gateway.ts` is the only code that knows how a provider is invoked. Modules depend on the `AiGateway` interface. Today it shells the subscription-backed Claude CLI (D1: no API key exists on this machine); swapping to a metered key is a change inside the gateway plus configuration.
+- **Model:** `claude-haiku-4-5-20251001` — the least expensive adequate model.
+- **Architecture rung:** one call. No retrieval (all facts are supplied), no tools (the capability answers, it does not act).
+- **Mandatory evals:** the `triage` module carries `"ai_eval": true` in `.claude/verification.json`. The suite runs inside the normal test run against a **recorded provider**, so routine verification spends no subscription capacity. Live runs are opt-in (`FL_EVAL_PROVIDER=live`) and capped at **40 provider calls per run, enforced in the runner**, per the budget approved on 2026-08-10.
+- **Grounding is structural:** an assessment citing evidence that was not supplied, or naming a capability that does not exist, is rejected. That check is what makes "grounded" mean something rather than being a promise in a prompt.
+- **Versioned behavior:** prompt, model, schema, validation, and fallback changes are behavioral software changes and run the suite before promotion. Current prompt version `triage-prompt-v2`.
 
 ## 8. Observability
 
@@ -172,6 +207,11 @@ Local, DEV, and a sandbox production-like environment — three local Docker sta
 12. **Login cost is bounded per email address, not globally.** An attacker using many distinct addresses can still consume scrypt capacity, because `scryptSync` blocks Node's only thread. A work queue or upstream rate limit belongs with slice 5.
 13. The `__Host-` cookie prefix is not set, so cookie injection from a sibling host is not closed. Not reachable on loopback; required before DEV or SANDBOX are exposed.
 14. There is no audit log retention or review process — outcomes are emitted, nothing consumes them yet.
+15. **Incidents carry a Case reference but no live Kibana integration.** Deliberate for slice 3; the wiring lands with the Phase 12 drills.
+16. **Triage evidence is derived from the incident report's own paragraphs.** There is no trace, log, or Case context yet, so grounding is real but narrow. Phase 12 adds further evidence sources without changing the contract.
+17. **The live eval suite covers only model-judgement cases** — 6 of 19. Cases that depend on a fabricated provider response cannot be produced by a real provider on demand, and running them live would convert real coverage into unearned passes.
+18. **No regression eval cases exist**, because no production escape has occurred. One is added per escape, per the standard.
+19. Triage has no MCP tool, so an MCP client cannot request an assessment. Deliberate — it would need its own budget authority.
 
 ### Provenance of this list
 

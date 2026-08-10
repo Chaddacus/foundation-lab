@@ -23,6 +23,12 @@
       "name": "mcp-serves",
       "$comment": "The MCP transport is a second process entry point over the same contracts; a cheap check that it still starts and lists tools.",
       "command": "node --test tests/contract/mcp-transport.test.ts"
+    },
+    {
+      "name": "ai-golden-heartbeat",
+      "ai_eval": true,
+      "$comment": "Recorded provider by default. The live heartbeat is exactly three calls, per the approved budget.",
+      "command": "node evals/incident-triage/run.ts --fast"
     }
   ],
   "module": {
@@ -94,6 +100,32 @@
       {
         "name": "mcp-transport",
         "command": "node --test tests/contract/mcp-transport.test.ts"
+      }
+    ],
+    "incidents": [
+      {
+        "name": "domain-unit",
+        "command": "node --test tests/unit/incidents-domain.test.ts"
+      },
+      {
+        "name": "authorization",
+        "command": "node --test tests/integration/authorization.test.ts"
+      }
+    ],
+    "triage": [
+      {
+        "name": "validation-unit",
+        "command": "node --test tests/unit/triage-validation.test.ts"
+      },
+      {
+        "name": "capability-integration",
+        "command": "node --test tests/integration/triage-capability.test.ts"
+      },
+      {
+        "name": "capability-evals",
+        "ai_eval": true,
+        "$comment": "Recorded provider: spends no subscription capacity. Live runs are FL_EVAL_PROVIDER=live and are budgeted at 40 calls, enforced in the runner.",
+        "command": "node evals/incident-triage/run.ts"
       }
     ]
   },

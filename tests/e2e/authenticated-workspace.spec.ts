@@ -244,10 +244,22 @@ test.describe('accessibility of the authenticated workspace', () => {
 
     for (const width of [1440, 1280, 1024, 800, 700, 640, 480, 375, 320]) {
       await page.setViewportSize({ width, height: 900 });
-      const overflows = await page.evaluate(
-        () => document.documentElement.scrollWidth > window.innerWidth + 1,
-      );
-      expect(overflows, `page scrolls horizontally at ${width}px`).toBe(false);
+
+      // Asserts the USER-VISIBLE property — that the window cannot actually be scrolled
+      // sideways — as well as the measurement. `scrollWidth` alone was the check that
+      // caught the real defect, but attempting the scroll is what a person would notice.
+      const result = await page.evaluate(() => {
+        window.scrollTo(500, 0);
+        const scrolledTo = window.scrollX;
+        window.scrollTo(0, 0);
+        return { scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth, scrolledTo };
+      });
+
+      expect(result.scrolledTo, `page can be scrolled sideways at ${width}px`).toBe(0);
+      expect(
+        result.scrollWidth > result.innerWidth + 1,
+        `document is wider than the viewport at ${width}px (${result.scrollWidth} vs ${result.innerWidth})`,
+      ).toBe(false);
     }
 
     await page.setViewportSize({ width: 375, height: 800 });

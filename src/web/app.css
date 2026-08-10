@@ -141,6 +141,15 @@
 .table-scroll {
   overflow-x: auto;
   margin-block-start: var(--space-3);
+  /* Containing block for absolutely-positioned descendants.
+   *
+   * Without it, a `.visually-hidden` span inside a table cell — screen-reader text on the
+   * row buttons — resolves against the initial containing block and escapes this scroll
+   * container entirely, landing beyond the viewport and making the whole PAGE scroll
+   * sideways. `overflow` clips normal flow, but not absolutely-positioned descendants whose
+   * containing block is further up. Measured, not theorised: the offending span sat at
+   * x=402 in a 375px viewport. */
+  position: relative;
 }
 
 .data-table {
@@ -154,7 +163,14 @@
   padding: var(--space-2) var(--space-3);
   border-block-end: 1px solid var(--color-border);
   vertical-align: top;
-  /* Break an unbroken run of characters rather than forcing the column wider. */
+}
+
+/* Break an unbroken run of characters rather than forcing the column wider — but ONLY on
+ * cells holding user data. Applying this to every cell broke short column labels mid-word
+ * ("STATU S", "CREA TED") once one long value squeezed the table, which inspection caught
+ * and no assertion would have. */
+.data-table td,
+.data-table tbody th {
   overflow-wrap: anywhere;
 }
 
@@ -163,6 +179,13 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--color-text-muted);
+  /* Column labels are short and fixed; they must never wrap. The container scrolls. */
+  white-space: nowrap;
+}
+
+/* Controls inside a table keep their label on one line for the same reason. */
+.data-table td .control {
+  white-space: nowrap;
 }
 
 .data-table tbody tr[aria-current] {

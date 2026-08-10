@@ -16,6 +16,8 @@
 import { currentSession, renderSignIn, signOut } from '/modules/customers/session.js';
 import { mountProjects, onProjectSelected } from '/modules/projects/projects.js';
 import { mountReleases, showReleasesFor } from '/modules/releases/releases.js';
+import { mountIncidents, onIncidentSelected } from '/modules/incidents/incidents.js';
+import { mountTriage, showTriageFor } from '/modules/triage/triage.js';
 
 const signedOutView = document.querySelector('[data-testid="signed-out-view"]');
 const signedInView = document.querySelector('[data-testid="signed-in-view"]');
@@ -61,11 +63,18 @@ function showApplication(session) {
 
   mountProjects(document.querySelector('[data-projects-root]'));
   mountReleases(document.querySelector('[data-releases-root]'));
+  mountIncidents(document.querySelector('[data-incidents-root]'));
+  mountTriage(document.querySelector('[data-triage-root]'));
 
-  // Cross-module composition happens HERE, in the spine. Projects publishes a selection;
-  // the shell passes it to Releases. Neither module imports the other.
+  // Cross-module composition happens HERE, in the spine. A module publishes a selection and
+  // the shell decides what it means. Projects does not import Releases, and Incidents does
+  // not import Triage — which is what lets the AI capability be removed or replaced without
+  // touching the module that supplies its subject.
   onProjectSelected((project) => {
     void showReleasesFor(project?.id ?? null, project?.name ?? '');
+  });
+  onIncidentSelected((incident) => {
+    showTriageFor(incident);
   });
 
   void showDeploymentIdentity();

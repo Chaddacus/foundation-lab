@@ -1,0 +1,92 @@
+/* Incident Triage — module-owned styling.
+ *
+ * Responsibility: make AI interpretation visually distinct from user data and from recorded
+ * facts (Standard 10). This is not decoration — it is the mechanism by which a reader can
+ * tell a suggestion from a finding without reading carefully.
+ *
+ * Every value derives from a foundation.css token.
+ */
+
+.ai-panel {
+  margin-block-start: var(--space-3);
+  padding: var(--space-4);
+  /* A distinct left edge and tint, so the panel reads as a different KIND of content than
+   * the tables and forms around it, not merely another section. */
+  border: 1px dashed var(--color-border);
+  border-inline-start: 4px solid var(--color-primary);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+}
+
+.ai-panel__label {
+  margin: 0;
+  font-size: var(--text-0);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-primary);
+}
+
+.ai-panel__provenance {
+  font-size: var(--text-0);
+  margin-block-start: var(--space-1);
+}
+
+.ai-panel h5 {
+  margin-block-start: var(--space-3);
+  margin-block-end: var(--space-1);
+}
+
+.ai-panel__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin-block-start: var(--space-3);
+}
+
+.ai-panel__facts dt {
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-size: var(--text-0);
+  align-self: center;
+}
+
+.ai-panel__facts dd {
+  margin: 0;
+}
+
+/* A suggested severity must never look like a recorded one. The dashed outline marks it as
+ * provisional, and the accompanying text says so — colour alone is not the cue. */
+.badge--suggested {
+  border-style: dashed;
+  color: var(--color-primary);
+  border-color: currentColor;
+}
+
+.badge--recorded {
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.incidents-form {
+  max-width: 40rem;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+}
+
+.incidents-form button[type='submit'] {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  border-color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* A <select> sizes itself to its widest option by default, so the long severity labels
+ * pushed the whole document wide at 375px. Constrained like every other field control. */
+.field select {
+  width: 100%;
+  max-width: 100%;
+  min-height: calc(var(--control-min-target) + var(--space-3));
+}
