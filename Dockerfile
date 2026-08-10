@@ -41,7 +41,13 @@ COPY scripts ./scripts
 
 ENV FL_VCS_REF=${FL_VCS_REF} \
     FL_SERVICE_VERSION=${FL_SERVICE_VERSION} \
-    NODE_ENV=production
+    NODE_ENV=production \
+    # The HashGate admits up to 8 concurrent scrypt hashes; the default libuv pool is 4, so
+    # without this the gate's own admitted work would exceed the pool and serialize, AND
+    # starve dns.lookup (OTLP export resolves a hostname) during the very incident the gate
+    # exists to survive. Sized above maxConcurrent with headroom for dns/fs/telemetry. Must
+    # be set before the process starts — libuv reads it once at startup.
+    UV_THREADPOOL_SIZE=16
 
 # Runs as the image's non-root user. A process that never needs to write outside its data
 # volume should not be able to.

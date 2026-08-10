@@ -54,8 +54,8 @@ Foundation Lab holds no real customer data. The classes above describe how the c
 
 ### Denial of service
 
-- **Password guessing.** **Decision:** per-account throttling after repeated failures, using a fixed lockout window. Not IP-based: this binds to loopback and IP throttling would be theatre here.
-- **scrypt cost as an amplifier.** Login is the only endpoint that runs scrypt. The per-user lockout does NOT bound it: that lockout lives on a user row, so an unknown address could never be throttled, and hashing runs before the lock is honoured for timing symmetry. Measured, an unauthenticated login flood raised an authenticated read from ~1 ms to ~58 ms. **Decision:** an in-memory per-address throttle, consulted before any hashing and keyed regardless of account existence so it reveals nothing. **Residual:** an attacker using many distinct addresses is still bounded only by the machine; closing that needs a work queue or upstream rate limit and belongs with slice 5.
+- **Password guessing.** **Decision:** per-account lockout after repeated failures, using a fixed window. The failure count is incremented atomically in SQL, so a concurrent burst of guesses cannot each overwrite the same stale count and evade the lock (a race the async-hash rewrite introduced and Phase 12 review caught). Not IP-based: this binds to loopback and IP throttling would be theatre here.
+- **scrypt cost as an amplifier.** Login is the only endpoint that runs scrypt. The per-user lockout does NOT bound it: that lockout lives on a user row, so an unknown address could never be throttled, and hashing runs before the lock is honoured for timing symmetry. Measured, an unauthenticated login flood raised an authenticated read from ~1 ms to ~58 ms — and in Phase 12 a flood of DISTINCT addresses (which the per-address throttle does not bound) drove it to ~1.66 s. **Decision (Phase 12):** hashing moved off the main thread (async scrypt) so it no longer blocks the event loop, plus a global hash-concurrency gate (8 concurrent, 32 queued) that sheds excess as a retryable 503. The per-address throttle is now an ATOMIC check-and-count before hashing (the earlier check-then-count straddled the async hash and admitted concurrent arrivals past its bound), and the per-user lockout increment is now an atomic SQL increment (the earlier read-modify-write across the async hash let concurrent failures overwrite the same count, defeating lockout). **Residual:** the global gate is blunt — under sustained flood it can shed legitimate logins; a per-source network rate limit upstream would fix that and is deferred, not designed. Load-shedding returns 503, identical for known and unknown emails.
 - **Malformed request crash.** Closed in the slice-1 review fixes; the regression tests stay.
 
 ### Elevation of privilege
@@ -84,7 +84,7 @@ The session signing secret is the application's first real secret.
 4. Sessions are stored in the application database, so horizontal scaling would need a shared store. Single-instance by design in slices 2–5.
 5. No rate limit on non-login endpoints.
 6. `Secure` is absent in LOCAL only; DEV and SANDBOX set it, and those run over loopback TLS or are re-examined in slice 5.
-7. Login work is bounded per email address but not globally: an attacker using many distinct addresses is limited only by the machine. A work queue or upstream rate limit belongs with slice 5.
+7. Login work is bounded per address (atomic throttle) AND globally (hash-concurrency gate, shed as 503). Residual: the global gate is blunt and can shed legitimate logins under sustained flood; a per-source network rate limit upstream is deferred.
 8. The `__Host-` cookie prefix is not set, so cookie injection from a sibling host is not closed. Not reachable while binding to loopback only; required before slice 5 exposes DEV or SANDBOX.
 
 Each is recorded in `SPEC.md` §10 so it is disclosed rather than implied.

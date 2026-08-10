@@ -98,6 +98,37 @@ export class RateLimiter {
   }
 
   /**
+   * Atomically admit one unit of work, or refuse it — check and count in a single step.
+   *
+   * `allow` then `record` is a check-then-act with a gap. That is safe only when nothing runs
+   * between them; `login` now awaits an async hash there, so N concurrent arrivals all passed
+   * `allow` before any called `record`, and the per-address bound admitted all N (measured in
+   * review: 60 concurrent on one address all reached hashing). This method closes the gap:
+   * it has no `await`, so on a single-threaded event loop the check and the count are one
+   * indivisible action. Call it BEFORE the hash so the count is what bounds the expensive work.
+   *
+   * Counts every ATTEMPT, not only failures: every attempt hashes, and bounding hashing is
+   * this limiter's purpose on the login path. A person signing in ten times in a minute is
+   * pathological; an attacker gets exactly the same ceiling. (The separate per-user lockout,
+   * not this, is the anti-guessing control, and it still counts only failures.)
+   */
+  tryAcquire(rawKey: string): boolean {
+    const key = normalize(rawKey);
+    const now = this.#clock.now();
+    const existing = this.#attempts.get(key);
+
+    if (existing === undefined || now - existing.windowStartedAt >= this.#windowMs) {
+      this.#attempts.set(key, { count: 1, windowStartedAt: now });
+      this.#evictExpired(now);
+      return true;
+    }
+
+    if (existing.count >= this.#max) return false;
+    existing.count += 1;
+    return true;
+  }
+
+  /**
    * How many addresses are currently tracked.
    *
    * Exists so the eviction behavior can be asserted directly. The map is caller-controlled

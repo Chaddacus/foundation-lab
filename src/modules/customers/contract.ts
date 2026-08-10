@@ -60,7 +60,10 @@ export interface CustomersCapability {
    *
    * Raises `unauthorized` for unknown email, wrong password, and locked-out account alike —
    * one message for all three, so login cannot be used to enumerate accounts. Raises
-   * `dependency` (retryable) when password hashing is being shed under load.
+   * `dependency` (retryable, surfaced as HTTP 503) when password hashing is being shed under
+   * load — a distinct outcome from `unauthorized`, because shedding load is not a statement
+   * about the credential. The 503 is identical for known and unknown emails, so shedding is
+   * not an account oracle.
    *
    * Asynchronous because hashing runs off the main thread: a synchronous login would block
    * the single Node thread for the duration of a scrypt, which is the defect Phase 12 fixed.

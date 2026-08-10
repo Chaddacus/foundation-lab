@@ -25,6 +25,7 @@ import {
   type RateLimitClock,
 } from '../../src/spine/rate-limit.ts';
 import type { AppError } from '../../src/spine/errors.ts';
+import { hashGate } from '../../src/modules/customers/passwords.ts';
 
 const PASSWORD = 'correct-horse-battery-staple';
 
@@ -229,5 +230,81 @@ describe('sessions', () => {
 
     service.logout(grant.sessionId);
     assert.equal(service.resolveSession(grant.sessionId), null);
+  });
+});
+
+describe('login is safe under concurrency (regression: the async hash introduced races)', () => {
+  // These defend the two properties the sync→async rewrite broke, each measured over
+  // concurrent traffic — the axis the pre-existing sequential tests could not see.
+
+  test('the lockout counter advances per attempt, not per burst', async () => {
+    // A throttle wide enough that every attempt reaches the hash, so this isolates the
+    // lockout increment from the per-address throttle bound.
+    const wideOpen = new RateLimiter(10_000, THROTTLE_WINDOW_MS, throttleClock);
+    const isolated = buildService(wideOpen);
+
+    const BURST = 30;
+    await Promise.all(
+      Array.from({ length: BURST }, () =>
+        isolated.login({ email: 'ana@acme.test', password: 'wrong' }).catch(() => { /* expected */ })),
+    );
+
+    const row = repository.findUserRowByEmail('ana@acme.test');
+    // Before the fix: an absolute write from a stale read left this at 1, and the account
+    // never locked. The atomic increment makes the database own the count.
+    assert.ok(
+      (row?.failed_attempts ?? 0) >= MAX_FAILED_ATTEMPTS,
+      `counter advanced by only ${row?.failed_attempts} across ${BURST} concurrent failures`,
+    );
+    assert.notEqual(row?.locked_until, null, 'the account did not lock under a concurrent guessing burst');
+  });
+
+  test('the per-address throttle admits at most its limit under a concurrent burst', async () => {
+    const throttle = new RateLimiter(THROTTLE_MAX_ATTEMPTS, THROTTLE_WINDOW_MS, throttleClock);
+    const isolated = buildService(throttle);
+
+    // All correct-password, so every ADMITTED attempt becomes a grant. The count of grants
+    // is therefore exactly how many the throttle let through.
+    const BURST = 30;
+    const results = await Promise.allSettled(
+      Array.from({ length: BURST }, () => isolated.login({ email: 'ana@acme.test', password: PASSWORD })),
+    );
+    const grants = results.filter((r) => r.status === 'fulfilled').length;
+
+    // Before the fix: allow() then (post-hash) record() straddled the await, so all 30
+    // passed admission before any counted and all 30 were granted.
+    assert.ok(grants <= THROTTLE_MAX_ATTEMPTS, `throttle admitted ${grants} concurrent logins, over the ${THROTTLE_MAX_ATTEMPTS} bound`);
+    assert.ok(grants < BURST, 'the throttle did not engage under concurrency');
+  });
+
+  test('a saturated hash gate sheds login as a retryable dependency, and does not push accounts toward lockout', async () => {
+    const isolated = buildService(new RateLimiter(10_000, THROTTLE_WINDOW_MS, throttleClock));
+
+    // Fill the real gate (8 running + 32 queued = 40) so the next hash is shed. One shared
+    // latch every held unit awaits, released in a finally so a failed assertion cannot leave
+    // the process-wide gate stuck for other suites.
+    let open = () => {};
+    const latch = new Promise<void>((resolve) => { open = resolve; });
+    const held = Array.from({ length: 40 }, () => hashGate.run(() => latch).catch(() => {}));
+    await new Promise((r) => setImmediate(r));
+
+    try {
+      const kindOf = async (email: string, password: string): Promise<string> => {
+        try { await isolated.login({ email, password }); return 'SUCCESS'; }
+        catch (error) { return (error as AppError).kind; }
+      };
+
+      const known = await kindOf('ana@acme.test', PASSWORD);
+      const unknown = await kindOf('ghost@nowhere.test', 'whatever');
+
+      assert.equal(known, 'dependency', 'a shed login on a known account was not a retryable dependency');
+      assert.equal(unknown, 'dependency', 'shed observable differs for known vs unknown email — an oracle');
+
+      const row = repository.findUserRowByEmail('ana@acme.test');
+      assert.equal(row?.failed_attempts, 0, 'a shed login pushed the account toward lockout');
+    } finally {
+      open();
+      await Promise.allSettled(held);
+    }
   });
 });

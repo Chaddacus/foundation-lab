@@ -82,14 +82,15 @@ export class CustomersService implements CustomersCapability {
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
-    // Bound hashing work BEFORE any scrypt call. The per-user lockout below cannot help
-    // here: it lives on a user row, so an unknown address could never be throttled and
-    // could drive unlimited scrypt on the single Node thread.
+    // Bound hashing work BEFORE any scrypt call, ATOMICALLY. The per-user lockout below
+    // cannot help here: it lives on a user row, so an unknown address could never be
+    // throttled and could drive unlimited scrypt.
     //
-    // Throttling is keyed by address regardless of whether an account exists, so it reveals
-    // nothing about account existence — and it is checked before hashing precisely so that
-    // the expensive work is what gets bounded.
-    if (!this.#throttle.allow(email)) {
+    // tryAcquire checks-and-counts in one step with no await, so concurrent arrivals cannot
+    // all slip past a check before any of them counts — the race the async hash introduced.
+    // Keyed by address regardless of whether an account exists, so it reveals nothing about
+    // account existence.
+    if (!this.#throttle.tryAcquire(email)) {
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
@@ -98,7 +99,6 @@ export class CustomersService implements CustomersCapability {
 
     if (row === null) {
       await this.#verify(password, DUMMY_VERIFIER);
-      this.#throttle.record(email);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
@@ -111,8 +111,7 @@ export class CustomersService implements CustomersCapability {
     const passwordMatches = await this.#verify(password, row.password_verifier);
 
     if (isLocked || !passwordMatches) {
-      this.#throttle.record(email);
-      if (!isLocked) this.#recordFailure(row.id, row.failed_attempts, now);
+      if (!isLocked) this.#recordFailure(row.id, now);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
@@ -222,7 +221,19 @@ export class CustomersService implements CustomersCapability {
       customerId,
       createdAt: this.#clock.now().toISOString(),
     };
-    this.#repository.insertUser({ ...user, passwordVerifier: await hashPassword(password) });
+    let verifier: string;
+    try {
+      verifier = await hashPassword(password);
+    } catch (error) {
+      // Same translation as #verify: a saturated gate is a retryable dependency condition,
+      // not an internal fault. Provisioning is not adapter-reachable today, but the scripts
+      // that call it should get a clean error rather than a 500-class untranslated throw.
+      if (error instanceof Error && error.name === 'HashGateSaturated') {
+        throw new AppError('dependency', 'The service is busy. Please try again in a moment.');
+      }
+      throw error;
+    }
+    this.#repository.insertUser({ ...user, passwordVerifier: verifier });
     return user;
   }
 
@@ -245,11 +256,18 @@ export class CustomersService implements CustomersCapability {
     }
   }
 
-  #recordFailure(userId: string, previousFailures: number, now: Date): void {
-    const failedAttempts = previousFailures + 1;
-    const lockedUntil = failedAttempts >= MAX_FAILED_ATTEMPTS
-      ? new Date(now.getTime() + LOCKOUT_MS).toISOString()
-      : null;
-    this.#repository.recordFailedAttempt(userId, failedAttempts, lockedUntil);
+  /**
+   * Count one failed attempt, ATOMICALLY.
+   *
+   * Was: read `failed_attempts` off the row, add one in JS, write the absolute value. Safe
+   * when login was synchronous; under the async hash, N concurrent failures all read the
+   * same stale count and all wrote `1`, so the lockout never tripped (measured in review:
+   * 30 concurrent wrong guesses left the counter at 1). The increment now happens inside a
+   * single SQL statement, so the database — not a stale JS read — owns the count, and the
+   * lock is set in the same statement the instant the count crosses the threshold.
+   */
+  #recordFailure(userId: string, now: Date): void {
+    const lockedUntilIfTripped = new Date(now.getTime() + LOCKOUT_MS).toISOString();
+    this.#repository.recordFailedAttempt(userId, MAX_FAILED_ATTEMPTS, lockedUntilIfTripped);
   }
 }
