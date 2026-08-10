@@ -57,7 +57,11 @@ describe('tool controls', () => {
 
   test('the argv actually reaches the child process', async () => {
     // Asserting the array alone would prove nothing if the class ignored it.
-    const path = stub('echo-args.sh', 'echo "$@"');
+    // Drains stdin first, like every other stub. Without that the child can exit before the
+    // prompt finishes writing, the gateway correctly reports a broken pipe, and the test
+    // fails for a reason that has nothing to do with argv. It passed on macOS and failed on
+    // Linux — a race the local platform happened to hide.
+    const path = stub('echo-args.sh', 'cat > /dev/null; echo "$@"');
     const result = await new ClaudeCliGateway(path).complete(request);
     assert.equal(result.ok, true);
     assert.match(result.ok ? result.text : '', /--disallowedTools/);
