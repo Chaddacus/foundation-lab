@@ -16,6 +16,86 @@
  * later design pass is a token change rather than a rewrite.
  */
 
+/* ---------- Design pass: this application's own identity ----------
+ *
+ * These override foundation.css TOKENS from the application layer. `foundation.css` itself
+ * is untouched: it is the shared base template across applications and the standard warns
+ * that changes there carry large blast radius. An application wanting its own look overrides
+ * the token values it owns — which is the whole reason the base is expressed as tokens.
+ *
+ * Every rule below is presentation. Nothing here changes markup semantics, ARIA, state
+ * ownership, or a module boundary — which is the claim this pass exists to test. */
+:root {
+  /* A cooler, denser neutral ramp than the base. Surfaces are separated by value rather
+   * than by borders alone, so the page reads as layered without extra chrome. */
+  --color-bg: #FCFCFD;
+  --color-surface: #F3F5F7;
+  --color-border: #DCE1E7;
+  --color-text: #131920;
+  --color-text-muted: #5A6675;
+
+  /* Indigo rather than the base blue: it holds up against the status greens and ambers the
+   * data uses, so the accent never competes with meaning-bearing colour. */
+  --color-primary: #3538CD;
+  --color-primary-contrast: #FFFFFF;
+  --color-focus: #3538CD;
+
+  /* Darkened from #0F7B43 / #A15C07. The row-hover background introduced by this pass put
+   * badge text at 4.50:1 and 4.37:1 against it — below the 4.5:1 AA threshold for text this
+   * size. Contrast is a property of the PAIR, so adding a surface changes what the
+   * foreground may be. */
+  --color-success: #0B6636;
+  --color-danger: #B42318;
+  --color-warning: #834B05;
+
+  --radius-1: 5px;
+  --radius-2: 10px;
+  --shadow-1: 0 1px 2px rgb(17 24 39 / 0.05);
+  --shadow-2: 0 8px 24px -6px rgb(17 24 39 / 0.12);
+
+  /* Application-owned additions, not base tokens. */
+  --surface-raised: #FFFFFF;
+  --rule-soft: #E8ECF1;
+  --tracking-tight: -0.014em;
+  --radius-focus: 3px;
+  --color-primary-hover: #2A2CA8;
+}
+
+/* Focus ring: accent-coloured, offset, with a light separator ring beneath it.
+ *
+ * The accent and the focus colour are deliberately the same hue, which means the ring would
+ * vanish against a filled primary button if it were drawn on the button itself. The offset
+ * puts it on the surface behind — measured at roughly 8:1 there — and the separator ring
+ * keeps that true even if a focused control is ever placed on a dark or accent-coloured
+ * surface. A focus indicator that depends on what happens to be behind it is a latent
+ * accessibility defect, not a working one. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--surface-raised);
+  border-radius: var(--radius-focus);
+}
+
+body {
+  /* rem, not px. A fixed pixel body size ignores the reader's own default-font-size setting
+   * while every rem-based heading around it still scales — measured, body stayed at 15.5px
+   * from a 16px root through a 32px root, taking the heading-to-body ratio from 2:1 to 4:1. */
+  font-size: 0.97rem;
+}
+
+h1, h2, h3 { letter-spacing: var(--tracking-tight); text-wrap: balance; }
+h1 { font-size: var(--text-4); line-height: 1.1; }
+h2 { font-size: var(--text-3); line-height: 1.2; }
+h3 { font-size: var(--text-2); line-height: 1.3; }
+
+/* Sections gain rhythm from a shared scale rather than ad-hoc margins on each block. */
+.app-main > section { padding-block-start: var(--space-4); }
+.app-main > section + section { border-block-start: 1px solid var(--rule-soft); }
+
+@media (prefers-reduced-motion: no-preference) {
+  button, .control, .app-nav a { transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
+}
+
 /* ---------- Shell ---------- */
 
 /* Hidden until focused. Clipping rather than a negative offset: an offset depends on the
@@ -29,11 +109,20 @@
   white-space: nowrap;
 }
 
+/* Above the sticky header. The first tab stop on the page must not be painted over by
+ * chrome that arrived later — asserted by test, because nothing in a suite that checks
+ * `toBeVisible()` and a bounding box can see occlusion.
+ *
+ * `fixed`, not `absolute`, and the two changes do different jobs: `z-index` is what closes
+ * the occlusion defect, while `fixed` is what keeps the link on screen when the link is
+ * focused on an already-scrolled page. Measured at scrollY 400: fixed stays at (8,8) fully
+ * painted; absolute leaves the viewport with the top of the document. Only the z-index half
+ * is defended by a test — no fixture page scrolls (see the note in the spec file). */
 .skip-link:focus {
-  position: absolute;
+  position: fixed;
   inset-inline-start: var(--space-2);
   inset-block-start: var(--space-2);
-  z-index: 1;
+  z-index: 10;
   padding: var(--space-2) var(--space-3);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -42,7 +131,22 @@
 
 .app-header {
   border-block-end: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background: var(--surface-raised);
+  position: sticky;
+  top: 0;
+  /* Below the skip link deliberately — see the z-index note there. An earlier revision put
+   * the header ABOVE it and claimed that kept the link "reachable and visible". Sitting above
+   * an opaque element is precisely what makes it invisible: measured, the focused link had
+   * 0 of 9 sample points visible and `elementFromPoint` returned the brand mark. */
+  z-index: 1;
+  box-shadow: var(--shadow-1);
+}
+
+/* A sticky header shrinks the scroll viewport. Without this, focusing a control lower in a
+ * long table scrolls it to the top of the document — underneath the header. WCAG 2.2 AA
+ * 2.4.11 Focus Not Obscured. */
+:root {
+  scroll-padding-block-start: 5rem;
 }
 
 .app-header__inner {
@@ -53,8 +157,23 @@
 }
 
 .app-brand {
-  font-size: var(--text-2);
-  font-weight: 600;
+  font-size: var(--text-1);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* A small mark built from a border, not an image: no asset to load, no alt text to get
+ * wrong, and it inherits the accent token like everything else. */
+.app-brand::before {
+  content: '';
+  inline-size: 0.7rem;
+  block-size: 0.7rem;
+  border: 2px solid var(--color-primary);
+  border-radius: 2px;
+  transform: rotate(45deg);
 }
 
 .app-nav {
@@ -92,6 +211,27 @@
   padding: var(--space-4) var(--space-3) var(--space-5);
 }
 
+/* ---------- Promoted: card surface ----------
+ * The three module forms had three copies of the same card rules. The design pass is the
+ * right moment to define it once — a duplicate treatment is how a design drifts apart. */
+.card {
+  /* A form card holds a single column of controls, so it takes a reading measure rather than
+   * the full page. Consolidating the three copies of this treatment initially dropped the
+   * width with them, which left one form at 40rem and another stretched across 1184px —
+   * caught by looking at the two side by side, not by any assertion. */
+  max-width: 40rem;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-1);
+}
+
+.card > h3:first-child {
+  margin-block-end: var(--space-1);
+  font-size: var(--text-1);
+}
+
 /* ---------- Promoted: forms (Customers sign-in, Projects create) ---------- */
 
 .field {
@@ -102,7 +242,20 @@
 
 .field label {
   font-weight: 600;
+  font-size: var(--text-0);
+  color: var(--color-text);
 }
+
+.field input,
+.field textarea,
+.field select {
+  border-radius: var(--radius-1);
+  background: var(--color-bg);
+}
+
+.field input:hover:not(:disabled),
+.field textarea:hover:not(:disabled),
+.field select:hover:not(:disabled) { border-color: var(--color-text-muted); }
 
 .field input,
 .field textarea {
@@ -190,9 +343,56 @@
 
 .data-table tbody tr[aria-current] {
   background: var(--color-surface);
+  /* A leading rule beside the tint. NOT claimed as forced-colours resilience: forced-colours
+   * mode strips box-shadow entirely, measured — the selected and unselected rows rendered
+   * identically. The block below is what actually survives it. */
+  box-shadow: inset 3px 0 0 var(--color-primary);
 }
 
+/* Forced colours removes backgrounds and shadows, so selection needs a border and the focus
+ * ring needs a system colour. Without this the only remaining selection cue is `aria-current`,
+ * which serves assistive technology but not a sighted user in high-contrast mode. */
+@media (forced-colors: active) {
+  .data-table tbody tr[aria-current] > * {
+    border-block-end: 2px solid Highlight;
+  }
+
+  :focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  /* No `.badge` rule here. One was written and removed: badges already carry a 1px border
+   * that forced colours repaints as CanvasText, so it changed nothing measurable — and by
+   * declaring `border-style: solid` at equal specificity it would have overridden
+   * `.badge--suggested`'s dashed border (the cue marking an AI severity as provisional)
+   * had the stylesheet load order ever changed. A rule that buys nothing and can silently
+   * erase a provenance affordance is worse than no rule. */
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .data-table tbody tr { transition: background-color 120ms ease; }
+}
+
+.data-table tbody tr:hover { background: var(--rule-soft); }
+
+.data-table thead th { border-block-end: 1px solid var(--color-border); }
+
 /* ---------- Promoted: status badges (Projects, Releases) ---------- */
+
+/* The primary action reads as primary once, per surface. */
+.card button[type='submit'] {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  border-color: var(--color-primary);
+  font-weight: 600;
+  border-radius: var(--radius-1);
+}
+
+.card button[type='submit']:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
 
 .badge {
   display: inline-block;

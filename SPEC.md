@@ -236,7 +236,9 @@ This was briefly not enforceable — required-reviewer protection is unavailable
 
 `\.github/workflows/verify.yml` runs the commands declared in `.claude/verification.json` on every pull request into `dev` and `main`: types, the full node suite, browser proof, and the recorded AI eval suite. CI and local verification run the same commands deliberately — a green check that ran something different from what an engineer runs is worse than no check, because it is trusted.
 
-`\.github/workflows/release.yml` builds the artifact once, pushes it to GHCR **by digest**, and attaches build provenance attestation. It contains no deploy job: see the Gate #2 note above.
+`.github/workflows/release.yml` builds the artifact once, pushes it to GHCR **by digest**, and attaches build provenance attestation.
+
+That was stated here in the present tense before it had ever succeeded — the only run at the time had failed on a lowercase registry name. It is now true and verified: run `31389073928` completed the `build` job successfully, dispatched on a branch *before* promotion. The workflow carries `workflow_dispatch` precisely so the build can be exercised without a promotion, which also means a packet claiming the build is unverifiable before promotion is wrong.
 
 **Three checks cannot run in hosted CI**, and they are named rather than left to be discovered:
 
@@ -278,17 +280,17 @@ The recorded eval suite that CI *does* run exercises validation, grounding and f
 **Platform and structure**
 
 17. **Sandbox-prod has never run.** Its stack is defined and its configuration validates, but no release has been deployed to it — that transition is Gate #2.
-18. **The repository is public.** Nothing secret has ever been committed — full history was scanned — but the LOCAL seed passwords and test fixture secrets are now visible. They apply only to a loopback environment with synthetic data, and DEV and SANDBOX refuse to start without a secret supplied at runtime.
-19. **Live evals, Elastic correlation and deployment verification do not run in CI** and depend on a human running them locally. Their evidence is attached to gate packets rather than produced by an independent system.
-20. **Rollback is written but untested**, because there is no previous artifact to roll back to.
-21. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design.
-22. Browser proof runs on Chromium only. No browser support matrix is declared, so behavior in other engines is untested.
-23. The spine's static mount still reaches into each module's internal `ui/` directory, and `buildApp` is edited in four places per module. With five modules the repetition is real; a module registry is the first refactor of slice 5.
+18. **Design-pass evidence is not durably retained.** The before/after comparison that found two visual defects lives in `artifacts/`, which is gitignored — the findings are recorded in commit messages and packets, but a reviewer cannot reach the images. Design passes run locally, so nothing uploads them to CI artifact storage.
+19. **`scroll-padding-block-start` is set but untested.** An assertion for it passed with the property removed, so it was deleted rather than kept as a test that cannot fail. The reason is not that the page cannot scroll — it can, and review measured it — but that no scenario was found in which the property changes where a focused control lands. Partial occlusion passes WCAG 2.4.11 Minimum, so this is a nicety rather than the AA criterion.
+20. **The repository is public.** Nothing secret has ever been committed — full history was scanned — but the LOCAL seed passwords and test fixture secrets are now visible. They apply only to a loopback environment with synthetic data, and DEV and SANDBOX refuse to start without a secret supplied at runtime.
+21. **Live evals, Elastic correlation and deployment verification do not run in CI** and depend on a human running them locally. Their evidence is attached to gate packets rather than produced by an independent system.
+22. **Rollback is written but untested**, because there is no previous artifact to roll back to.
+23. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design.
+24. Browser proof runs on Chromium only. No browser support matrix is declared, so behavior in other engines is untested.
+25. The spine's static mount still reaches into each module's internal `ui/` directory, and `buildApp` is edited in four places per module. With five modules the repetition is real; a module registry is the first refactor of slice 5.
 
 ### Provenance of this list
 
-Much of this list came from independent fresh-context review rather than from the builder. Across slices 1–3 those reviews drove fixes for a remote denial of service, a security fail-open, a dead telemetry pipeline, an eval gate blind to prompt and model changes, an untested provider gateway, and several documents claiming more than the code delivered. Items 7, 8, 9, 12 and 13 in particular are residuals those reviews forced into the open rather than leaving implied.
+Much of this list came from independent fresh-context review rather than from the builder. Across slices 1–3 and the slice-6 design pass, those reviews drove fixes for a remote denial of service, a security fail-open, a dead telemetry pipeline, an eval gate blind to prompt and model changes, an untested provider gateway, a focused skip link hidden behind a sticky header, and several documents claiming more than the code delivered. Items 7, 8, 9, 12, 13 and 19 in particular are residuals those reviews forced into the open rather than leaving implied.
 
-### Provenance of this list
-
-Items 1, 3, 4, 8, 9 and 10 were found by independent fresh-context review of the slice-1 commit, not by the builder. Two reviewers ran against `f86ce82`: an adversarial code review and a browser verification. Their material findings are fixed in the follow-up commit; these entries record what remains true after those fixes.
+(This section previously appeared twice — a slice-1 copy survived below its own replacement, attributing the list to a review of `f86ce82` alone. That is the drift this document warns about, found while correcting the numbering above.)
