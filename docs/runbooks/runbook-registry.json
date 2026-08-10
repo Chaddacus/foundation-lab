@@ -1,0 +1,4 @@
+{
+  "$comment": "Runbook authority registry (cross-model audit C2). CODEOWNERS-protected: an entry can only be added through a human-reviewed merge. EMPTY on purpose — no runbook has been reviewed and approved for production autonomy. rb-rollback-sandbox-001 is DEV-tested only; arming it against a production environment is refused by scripts/verify-runbook.mjs until a distinct human approver registers its content hash here through review.",
+  "runbooks": []
+}

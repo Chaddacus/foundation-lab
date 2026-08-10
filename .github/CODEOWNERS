@@ -1,0 +1,9 @@
+# Governance/authority paths — human review required, the bot cannot self-approve.
+# Pair with a ruleset requiring code-owner review (the gate preflight checks it).
+/gate-config.json               @Chaddacus
+/docs/runbooks/                 @Chaddacus
+/scripts/verify-gates.mjs       @Chaddacus
+/scripts/verify-runbook.mjs     @Chaddacus
+/scripts/runbook-rollback.ts    @Chaddacus
+/.github/                       @Chaddacus
+/SPEC.md                        @Chaddacus

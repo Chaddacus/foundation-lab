@@ -8,8 +8,10 @@
  * always goes through those gates (SPEC §10.6 / observability L4).
  *
  * Two guards make it safe to be autonomous — and safe to NOT be, yet:
- *  - It refuses `--arm` unless the runbook has an independent human reviewer recorded. An
- *    unreviewed runbook can run in `--dry-run` (grounding + checks, no action) only.
+ *  - Production arming is gated by scripts/verify-runbook.mjs (foundation C2): the runbook's
+ *    content hash must be in the CODEOWNERS-protected registry with a distinct human approver,
+ *    committed and clean, declaring a typed capability. The builder cannot forge that entry —
+ *    it merges only through a review the builder cannot give. DEV is the exempt test bed.
  *  - Every prerequisite and the post-action verification fail CLOSED: a missing precondition
  *    or an unproven result aborts and escalates rather than proceeding.
  *
@@ -21,7 +23,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync, openSync, closeSync, unlinkSync, constants as fsConstants } from 'node:fs';
+import { existsSync, openSync, closeSync, unlinkSync, constants as fsConstants } from 'node:fs';
 
 interface Args { [k: string]: string | boolean; }
 const args: Args = {};
@@ -60,17 +62,23 @@ function run(command: string, cmdArgs: readonly string[]): string {
   return execFileSync(command, cmdArgs, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 }
 
-// ---- Reviewer guard: PRODUCTION autonomy requires an independent human reviewer. ----
-// The contract is "tested in DEV/staging/simulation BEFORE production autonomy is enabled",
-// so arming against a non-DEV environment demands a reviewer; arming against DEV is exactly
-// the pre-review test and does not. This is the L4 precondition made mechanical (FND-043):
-// an unreviewed runbook can be exercised in DEV but can never fire against sandbox/prod.
-const runbookText = readFileSync('docs/runbooks/rollback-to-last-live-verified.yaml', 'utf8');
-const reviewer = /reviewed_by:\s*"([^"]*)"/.exec(runbookText)?.[1] ?? '';
-const isProductionClass = (env as string).toUpperCase() !== 'DEV';
-if (armed && isProductionClass && reviewer.trim() === '') {
-  fail(`refusing to --arm against ${env}: the runbook has no independent human reviewer recorded. ` +
-    'Production autonomy is not enabled until it does; it may be tested in DEV first.');
+// ---- Authority guard: production arming requires a registered, human-approved runbook. ----
+// Delegates to verify-runbook.mjs (foundation C2): the trust root is a registry entry that
+// can only be added through a CODEOWNERS-reviewed merge — content-hash bound, distinct
+// approver, typed capability, committed-and-clean. The builder cannot forge it. DEV is the
+// pre-registration test bed and is exempt (FND-043). Fail-closed: any non-zero verdict, or
+// an inability to run the verifier, refuses the arm.
+const RUNBOOK_FILE = 'docs/runbooks/rollback-to-last-live-verified.yaml';
+if (armed && (env as string).toUpperCase() !== 'DEV') {
+  let verdict;
+  try {
+    verdict = JSON.parse(run('node', ['scripts/verify-runbook.mjs', RUNBOOK_FILE, 'docs/runbooks/runbook-registry.json', env]));
+  } catch (error) {
+    // The verifier exits non-zero on refusal; execFileSync throws, and we read its stdout.
+    const stdout = (error && typeof error === 'object' && 'stdout' in error) ? String(error.stdout) : '';
+    try { verdict = JSON.parse(stdout); } catch { fail(`runbook authority verifier could not run: ${String(error).split('\n')[0]}`); }
+  }
+  if (!verdict?.may_arm) fail(`runbook authority refused: ${verdict?.reason ?? 'unknown'}`);
 }
 
 // ---- Grounding: read the ACTUAL running digest, never assume it. ----
@@ -94,7 +102,7 @@ const grounding = {
   container,
   current_digest: currentDigest,
   rollback_digest: toDigest,
-  reviewer: reviewer.trim() === '' ? '(none — dry-run only)' : reviewer.trim(),
+  authority: (env as string).toUpperCase() === 'DEV' ? 'DEV test bed (registry not required)' : 'registry-verified for production',
 };
 console.log(JSON.stringify({ runbook: 'rb-rollback-sandbox-001', phase: 'grounded', grounding }, null, 2));
 
