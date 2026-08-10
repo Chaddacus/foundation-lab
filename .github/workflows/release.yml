@@ -92,25 +92,6 @@ jobs:
           echo "artifact: ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }}"
           echo "revision: ${{ github.sha }}"
 
-      - name: Print the Gate #2 procedure
-        run: |
-          echo "Artifact built and attested:"
-          echo "  ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}"
-          echo "  revision ${{ github.sha }}"
-          echo
-          echo "This workflow does NOT deploy. Promotion to sandbox-prod is Human Gate #2,"
-          echo "performed on the machine hosting that environment, per"
-          echo "docs/release/gate-2-packet.md. After approval, on that machine:"
-          echo
-          echo "  FL_IMAGE=ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }} \\"
-          echo "  FL_VCS_REF=${{ github.sha }} \\"
-          echo "  FL_SERVICE_VERSION=${{ github.ref_name }}-${{ github.run_number }} \\"
-          echo "  FL_SESSION_SECRET=\"\$(rbw get foundation-lab-sandbox-session)\" \\"
-          echo "  docker compose -f compose.sandbox.yaml up -d"
-          echo
-          echo "LIVE VERIFIED is declared only after:"
-          echo "  node scripts/verify-deployment.ts http://127.0.0.1:4330"
-
   authorize-deploy:
     needs: build
     runs-on: ubuntu-latest
