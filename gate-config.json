@@ -2,15 +2,26 @@
   "$comment": "Declared human-gate controls for this repository. The source of truth the preflight verifier (templates/release/verify-gates.mjs) checks the LIVE GitHub state against, fail-closed. Authorization decisions reference the verifier's output, not this file's existence. Phase 13 C1.",
   "rulesets": {
     "gate1-main": {
-      "applies_to": ["refs/heads/main"],
-      "require_rule_types": ["deletion", "non_fast_forward", "pull_request", "required_status_checks"],
+      "applies_to": [
+        "refs/heads/main"
+      ],
+      "require_rule_types": [
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks"
+      ],
       "pull_request": {
         "min_approvals": 1,
         "dismiss_stale_on_push": true,
-        "require_last_push_approval": true
+        "require_last_push_approval": true,
+        "require_code_owner_review": true
       },
       "required_checks": [
-        { "context": "verify", "require_source_binding": true }
+        {
+          "context": "verify",
+          "require_source_binding": true
+        }
       ]
     }
   },

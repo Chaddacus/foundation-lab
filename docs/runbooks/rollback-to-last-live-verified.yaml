@@ -28,7 +28,7 @@ scope:
   services: ["foundation-lab"]
 
 action:
-  allowed: "redeploy the named previous artifact DIGEST via compose, then verify identity"
+  capability: "rollback_to_last_live_verified_digest"   # TYPED — the executor dispatches only on this enum, never on free prose
   parameter_bounds:
     artifact_source: "last-live-verified"   # a digest recorded in a release record, never arbitrary
     builds_code: false                       # hard: the executor never invokes a build
