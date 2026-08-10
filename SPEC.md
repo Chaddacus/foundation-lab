@@ -1,6 +1,6 @@
 # SPEC.md — Foundation Lab
 
-**Status:** slice 6 complete. Both human gates have been exercised on a real promotion: Gate #1 authorized the exact head of PR #11, `959fa58` (merged to `main` as `4487e58`), and Gate #2 authorized artifact `sha256:7cad7e5d…` to sandbox-prod, which is **deployed and LIVE VERIFIED**. This file is the canonical current specification for this repository. Documentation under `docs/` is subordinate to it. Historical plans and handoffs do not outrank this file or the live system.
+**Status:** Phase 12 complete. A SEV-1 incident (login-flood password-hash starvation) was injected into sandbox-prod, diagnosed from live telemetry, repaired at root cause, and driven back to production through both human gates — released as `main-4` @ `ce2c01f`, LIVE VERIFIED, and the original failure retested on the repaired environment (1.66 s → 3.8 ms). A bounded rollback runbook was exercised in DEV. Both gates and the incident loop are now demonstrated on a real incident.
 
 ## 1. Purpose
 
@@ -202,7 +202,7 @@ Three local Docker stacks on loopback, colocated with the Elastic stack:
 |---|---|---|
 | LOCAL | 4310 | run from source; ephemeral session secret |
 | DEV | 4320 | running the released artifact, verified against it |
-| SANDBOX | 4330 | **deployed and LIVE VERIFIED** — `main-3` @ `4487e58`, digest `sha256:7cad7e5d…` |
+| SANDBOX | 4330 | **deployed and LIVE VERIFIED** — `main-4` @ `ce2c01f` (the Phase 12 repair) |
 
 The sandbox is not real customer production. It exists to prove release gates and bounded self-healing safely.
 
