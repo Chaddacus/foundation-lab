@@ -220,6 +220,12 @@ The digest is supplied at deploy time and reported by `/api/meta` and in every s
 
 **Gate #1 is mechanically enforced** by the `gate1-main` repository ruleset on `Chaddacus/foundation-lab`: pull request required, one approving review, stale reviews dismissed on push, last-push approval required, the `verify` check required, force-push and deletion blocked, and **no bypass actors**. Proven, not assumed — a direct push to `main` was attempted during setup and rejected by the server citing those rules.
 
+**Automation identity.** Builder and approver are separate accounts, which is what makes Gate #1's review requirement meaningful rather than ceremonial. The `foundation-lab-bot` GitHub App (App ID 4546134) holds `contents: write` and `pull_requests: write` on this repository and nothing else — no admin, no ruleset authority, no bypass. It pushes branches, opens pull requests, and merges into `dev`. It **cannot** approve a pull request and **cannot** merge to `main`.
+
+The human approver's account never authors the changes it approves. GitHub enforces both halves of this independently of any configuration here: it refuses self-approval outright, and the `require_last_push_approval` rule means the account that made the most recent push cannot be the one that approves it. Both were confirmed by attempting them.
+
+The App's private key lives outside the repository under the operator's control. Only short-lived installation tokens — one hour — are ever used, and the durable credential is never held by automation.
+
 **Gate #2 is NOT mechanically enforced**, and this is a real limitation rather than a choice. Mechanical enforcement would be a GitHub Environment with a required reviewer, which is unavailable for private repositories on this account's plan. An environment created without that rule enforces nothing while looking like a control, so the one created during setup was verified to have zero protection rules and deleted. Gate #2 is a documented human procedure performed on the machine hosting the sandbox environment — which a hosted runner could not reach regardless, since sandbox-prod is loopback-only.
 
 ## 9a. Continuous integration
