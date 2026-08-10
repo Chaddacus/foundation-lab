@@ -16,6 +16,78 @@
  * later design pass is a token change rather than a rewrite.
  */
 
+/* ---------- Design pass: this application's own identity ----------
+ *
+ * These override foundation.css TOKENS from the application layer. `foundation.css` itself
+ * is untouched: it is the shared base template across applications and the standard warns
+ * that changes there carry large blast radius. An application wanting its own look overrides
+ * the token values it owns — which is the whole reason the base is expressed as tokens.
+ *
+ * Every rule below is presentation. Nothing here changes markup semantics, ARIA, state
+ * ownership, or a module boundary — which is the claim this pass exists to test. */
+:root {
+  /* A cooler, denser neutral ramp than the base. Surfaces are separated by value rather
+   * than by borders alone, so the page reads as layered without extra chrome. */
+  --color-bg: #FCFCFD;
+  --color-surface: #F3F5F7;
+  --color-border: #DCE1E7;
+  --color-text: #131920;
+  --color-text-muted: #5A6675;
+
+  /* Indigo rather than the base blue: it holds up against the status greens and ambers the
+   * data uses, so the accent never competes with meaning-bearing colour. */
+  --color-primary: #3538CD;
+  --color-primary-contrast: #FFFFFF;
+  --color-focus: #3538CD;
+
+  --color-success: #0F7B43;
+  --color-danger: #B42318;
+  --color-warning: #A15C07;
+
+  --radius-1: 5px;
+  --radius-2: 10px;
+  --shadow-1: 0 1px 2px rgb(17 24 39 / 0.05);
+  --shadow-2: 0 8px 24px -6px rgb(17 24 39 / 0.12);
+
+  /* Application-owned additions, not base tokens. */
+  --surface-raised: #FFFFFF;
+  --rule-soft: #E8ECF1;
+  --tracking-tight: -0.014em;
+}
+
+/* Focus ring: accent-coloured, offset, with a light separator ring beneath it.
+ *
+ * The accent and the focus colour are deliberately the same hue, which means the ring would
+ * vanish against a filled primary button if it were drawn on the button itself. The offset
+ * puts it on the surface behind — measured at roughly 8:1 there — and the separator ring
+ * keeps that true even if a focused control is ever placed on a dark or accent-coloured
+ * surface. A focus indicator that depends on what happens to be behind it is a latent
+ * accessibility defect, not a working one. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--surface-raised);
+  border-radius: 3px;
+}
+
+body {
+  font-size: 15.5px;
+  letter-spacing: 0.001em;
+}
+
+h1, h2, h3 { letter-spacing: var(--tracking-tight); text-wrap: balance; }
+h1 { font-size: var(--text-4); line-height: 1.1; }
+h2 { font-size: var(--text-3); line-height: 1.2; }
+h3 { font-size: var(--text-2); line-height: 1.3; }
+
+/* Sections gain rhythm from a shared scale rather than ad-hoc margins on each block. */
+.app-main > section { padding-block-start: var(--space-4); }
+.app-main > section + section { border-block-start: 1px solid var(--rule-soft); }
+
+@media (prefers-reduced-motion: no-preference) {
+  button, .control, .app-nav a { transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
+}
+
 /* ---------- Shell ---------- */
 
 /* Hidden until focused. Clipping rather than a negative offset: an offset depends on the
@@ -42,7 +114,14 @@
 
 .app-header {
   border-block-end: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background: var(--surface-raised);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  /* The header carries identity and the sign-out control; keeping it in view is a usability
+   * decision, not decoration. It sits above the skip link's focused state by z-index order,
+   * so the skip link is still reachable and visible. */
+  box-shadow: var(--shadow-1);
 }
 
 .app-header__inner {
@@ -53,8 +132,23 @@
 }
 
 .app-brand {
-  font-size: var(--text-2);
-  font-weight: 600;
+  font-size: var(--text-1);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* A small mark built from a border, not an image: no asset to load, no alt text to get
+ * wrong, and it inherits the accent token like everything else. */
+.app-brand::before {
+  content: '';
+  inline-size: 0.7rem;
+  block-size: 0.7rem;
+  border: 2px solid var(--color-primary);
+  border-radius: 2px;
+  transform: rotate(45deg);
 }
 
 .app-nav {
@@ -92,6 +186,22 @@
   padding: var(--space-4) var(--space-3) var(--space-5);
 }
 
+/* ---------- Promoted: card surface ----------
+ * The three module forms had three copies of the same card rules. The design pass is the
+ * right moment to define it once — a duplicate treatment is how a design drifts apart. */
+.card {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-1);
+}
+
+.card > h3:first-child {
+  margin-block-end: var(--space-1);
+  font-size: var(--text-1);
+}
+
 /* ---------- Promoted: forms (Customers sign-in, Projects create) ---------- */
 
 .field {
@@ -102,7 +212,20 @@
 
 .field label {
   font-weight: 600;
+  font-size: var(--text-0);
+  color: var(--color-text);
 }
+
+.field input,
+.field textarea,
+.field select {
+  border-radius: var(--radius-1);
+  background: var(--color-bg);
+}
+
+.field input:hover:not(:disabled),
+.field textarea:hover:not(:disabled),
+.field select:hover:not(:disabled) { border-color: var(--color-text-muted); }
 
 .field input,
 .field textarea {
@@ -190,9 +313,34 @@
 
 .data-table tbody tr[aria-current] {
   background: var(--color-surface);
+  /* Selection is carried by a leading rule as well as a tint, so it survives a
+   * high-contrast or forced-colours rendering where the tint may be dropped. */
+  box-shadow: inset 3px 0 0 var(--color-primary);
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .data-table tbody tr { transition: background-color 120ms ease; }
+}
+
+.data-table tbody tr:hover { background: var(--rule-soft); }
+
+.data-table thead th { border-block-end: 1px solid var(--color-border); }
+
 /* ---------- Promoted: status badges (Projects, Releases) ---------- */
+
+/* The primary action reads as primary once, per surface. */
+.card button[type='submit'] {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  border-color: var(--color-primary);
+  font-weight: 600;
+  border-radius: var(--radius-1);
+}
+
+.card button[type='submit']:hover:not(:disabled) {
+  background: #2A2CA8;
+  border-color: #2A2CA8;
+}
 
 .badge {
   display: inline-block;
