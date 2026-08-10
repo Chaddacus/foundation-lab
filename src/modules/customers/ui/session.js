@@ -49,7 +49,7 @@ export async function signOut() {
  */
 export function renderSignIn(container, onSignedIn) {
   container.innerHTML = `
-    <form class="stack signin-form" data-testid="signin-form" novalidate>
+    <form class="stack card signin-form" data-testid="signin-form" novalidate>
       <h2>Sign in</h2>
       <p class="text-muted">Use your Foundation Lab account.</p>
 

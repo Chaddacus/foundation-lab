@@ -76,7 +76,7 @@ export function mountProjects(container) {
   selectedId = null;
 
   root.innerHTML = `
-    <form class="stack projects-form" data-testid="create-project-form" novalidate>
+    <form class="stack card projects-form" data-testid="create-project-form" novalidate>
       <h3>Add a project</h3>
 
       <fieldset class="stack form-fields" data-testid="create-fieldset">

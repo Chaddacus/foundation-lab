@@ -1,35 +1,20 @@
 /* Projects — module-owned styling.
  *
- * Responsibility: what is specific to the Projects create form.
- *
- * Place in the system: inside the Projects module, next to the UI it styles (Standard 10).
- *
- * The table, badge, field and form-message primitives this UI also uses were promoted to
- * the shell's design layer (`src/web/app.css`) once the Releases and Customers UIs needed
- * them too. What remains here is genuinely Projects-only.
+ * After the design pass this file holds almost nothing, and that is the correct outcome:
+ * the card surface and the submit-button treatment were identical in three modules, so they
+ * were promoted to the application's design layer. What stays here is the one rule that is
+ * genuinely about projects — the destructive control on the archive action.
  */
 
-.projects-form {
-  max-width: 40rem;
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-2);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-1);
-}
-
-.projects-form button[type='submit'] {
-  background: var(--color-primary);
-  color: var(--color-primary-contrast);
-  border-color: var(--color-primary);
-  font-weight: 600;
-}
-
-/* The sign-in form reuses the same card treatment; it is styled by the Customers module. */
-
-/* A destructive control looks different from a neutral one. Colour is not the only cue —
- * the button text says "Archive" and the confirmation states the consequence. */
+/* A destructive control looks different from a neutral one. Colour is not the only cue: the
+ * label says "Archive" and the confirmation states the consequence before it happens. */
 .control--danger {
   color: var(--color-danger);
   border-color: currentColor;
+  font-weight: 600;
+}
+
+.control--danger:hover:not(:disabled) {
+  background: var(--color-danger);
+  color: var(--color-primary-contrast);
 }
