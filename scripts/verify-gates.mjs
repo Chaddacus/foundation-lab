@@ -95,8 +95,21 @@ for (const wantName of Object.keys(spec.rulesets ?? {})) {
       if (pr.require_last_push_approval && p.require_last_push_approval !== true) fail(`${wantName} last-push approval`, 'not enabled — the pusher could self-approve');
       else pass(`${wantName} last-push approval`, String(p.require_last_push_approval));
       if (pr.require_code_owner_review) {
-        if (p.require_code_owner_review === true) pass(`${wantName} code-owner review`, 'true');
-        else fail(`${wantName} code-owner review`, 'not enabled — CODEOWNERS on governance paths is unenforced (C3)');
+        if (p.require_code_owner_review !== true) {
+          fail(`${wantName} code-owner review`, 'not enabled — CODEOWNERS on governance paths is unenforced (C3)');
+        } else {
+          // The flag alone is not the control. GitHub evaluates it against the BASE branch's
+          // CODEOWNERS, so require the file to actually exist on a target ref of this ruleset;
+          // an enabled flag with no CODEOWNERS on that branch is a vacuous control that would
+          // otherwise report green (round-ten review).
+          const refs = (want.applies_to ?? []).map((r) => r.replace('refs/heads/', ''));
+          const branch = refs[0];
+          const found = ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS'].some((path) => {
+            try { gh(`repos/${repo}/contents/${path}?ref=${branch}`); return true; } catch { return false; }
+          });
+          if (found) pass(`${wantName} code-owner review`, `enabled + CODEOWNERS present on ${branch}`);
+          else fail(`${wantName} code-owner review`, `flag on, but NO CODEOWNERS on ${branch} — the requirement is vacuous`);
+        }
       }
     }
   }

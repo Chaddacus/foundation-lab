@@ -1,7 +1,10 @@
 /**
  * Runbook authority verifier — refuse to arm any runbook whose authority the builder could
- * have forged. The trust root is a registry entry ON THE PROTECTED BRANCH, which can only be
- * placed there through a CODEOWNERS-reviewed merge the builder cannot approve.
+ * have forged. The trust root is a registry entry ON A REVIEW-PROTECTED BRANCH, which can
+ * only be placed there through a reviewed, no-self-approval, no-bypass merge the builder
+ * cannot complete alone. (Code-owner review on governance paths is a stronger refinement of
+ * this once CODEOWNERS is present on the protected branch; the load-bearing barrier here is
+ * the generic reviewed-merge, which this verifier confirms is actually active on the ref.)
  *
  * Cross-model audit C2, and its round-nine correction: an earlier version read the registry
  * from the WORKING TREE and checked only the runbook file's git-cleanliness — so a
@@ -66,11 +69,27 @@ if (!KNOWN_CAPABILITIES.has(capability)) {
 if (env.toUpperCase() === 'DEV') allow({ capability, note: 'DEV test bed — registry not required' });
 
 if (expiry === '') refuse('no expiry recorded — production autonomy is not granted');
+// Enforce the expiry, don't just require its presence: a lapsed runbook must not arm.
+const expiryDate = new Date(expiry);
+if (Number.isNaN(expiryDate.getTime())) refuse(`expiry "${expiry}" is not a parseable date`);
+if (expiryDate.getTime() < Date.now()) refuse(`runbook autonomy lapsed on ${expiry} — re-review required before arming`);
 if (author === '') refuse('runbook declares no owner — cannot enforce approver≠author separation of duties');
 
 const repo = opt.repo;
 const ref = opt['protected-ref'];
 if (!repo || !ref) refuse('a production arm requires --repo and --protected-ref so authority can be read from the protected branch');
+
+// The ref must be GENUINELY protected — a reviewed, no-bypass merge. Trusting whatever ref
+// the caller names would let an entry on a bot-mergeable branch (e.g. one with no PR rule)
+// authorize production. Assert the branch carries an active pull_request rule and no bypass.
+try {
+  const rules = JSON.parse(execFileSync('gh', ['api', `repos/${repo}/rules/branches/${ref}`], { encoding: 'utf8' }));
+  const hasReview = rules.some((r) => r.type === 'pull_request'
+    && (r.parameters?.required_approving_review_count ?? 0) >= 1);
+  if (!hasReview) refuse(`--protected-ref ${ref} is not review-protected (no pull_request rule requiring approval) — an entry there is not a reviewed merge`);
+} catch (e) {
+  refuse(`could not confirm ${repo}@${ref} is review-protected (${String(e).split('\n')[0]})`);
+}
 
 function ghContent(path) {
   // Raw file content at the protected ref, straight from the server — never the working tree.
