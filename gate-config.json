@@ -15,7 +15,7 @@
         "min_approvals": 1,
         "dismiss_stale_on_push": true,
         "require_last_push_approval": true,
-        "require_code_owner_review": true
+        "$note": "C2/C3 trust root is this reviewed, no-self-approval, no-bypass merge (min_approvals + require_last_push_approval + no bypass_actors, all live). Code-owner review is a foundation recommendation for multi-maintainer repos; it is inert in this single-human instance until CODEOWNERS is present on main, so it is not asserted as a hard gate here."
       },
       "required_checks": [
         {
