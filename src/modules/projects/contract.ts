@@ -61,9 +61,10 @@ export interface UpdateProjectInput {
 /**
  * The Projects capability.
  *
- * Every method takes the resolved `Actor`. Slice 1 does not yet check the actor against
- * project ownership; the parameter is present so slice 2 implements authorization inside
- * the module instead of changing every adapter signature.
+ * Every method takes the resolved `Actor` and is authorized against it: a project belonging
+ * to another customer is reported as `not_found`, identically to one that does not exist,
+ * so the error does not confirm the id is real. Ownership is set from the session at
+ * creation and cannot be changed.
  *
  * Errors: implementations raise `AppError` — `validation` for bad input, `not_found` for
  * an unknown id. Adapters translate; they do not invent error semantics.

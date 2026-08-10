@@ -71,7 +71,7 @@ Owned data: `customers`, `users`, `sessions`. No other module reads or writes th
 
 | Capability | Notes |
 |---|---|
-| `login` | the only capability reachable without authentication |
+| `login` | the only capability accepting a credential; one of three public routes |
 | `resolveSession` | the spine's authentication hook |
 | `logout` | idempotent |
 | `getCustomer` | the caller's own customer only |
@@ -132,9 +132,11 @@ Meaningful frontend work requires browser-grounded proof, and the evidence must 
   Foundation Lab still holds no real customer records; the classes describe how the code must behave so the qualification exercises the real rules. `User` deliberately has no verifier field, so a verifier cannot leave the module even by accident — asserted in `tests/integration/authorization.test.ts`.
 - **Secrets:** the repository stores secret **references**, never values. This machine's backend map (`global/secrets-backends.json`) resolves this directory scope to **`rbw://` (personal plane)**. This supersedes `REFERENCE_APPLICATION.md` §Secrets, which still names 1Password; that document is stale and is logged for the Phase 13 stale-paths audit.
 - **AI provider:** Claude through the subscription-backed CLI, behind the Standard 9 gateway seam. No `ANTHROPIC_API_KEY` exists on this machine. A later swap to a metered key is a configuration and adapter change.
-- **Authentication:** session-based. Passwords are hashed with scrypt (`node:crypto`); the session id is 256 bits, stored server-side, and carried in an `HttpOnly`, `SameSite=Strict` cookie signed with an HMAC. `Secure` is set in every environment except LOCAL, which is plain HTTP on loopback. Login is the only capability reachable unauthenticated. The unverified actor header from slice 1 is **deleted**.
+- **Authentication:** session-based. Passwords are hashed with scrypt (`node:crypto`); the session id is 256 bits, stored server-side, and carried in an `HttpOnly`, `SameSite=Strict` cookie signed with an HMAC. `Secure` is set in every environment except LOCAL, which is plain HTTP on loopback. Three routes are public: `POST /api/session` (login), `DELETE /api/session` (sign-out, public so an expired session can still clear its cookie), and `GET /api/session` (which answers `{authenticated:false}` for an anonymous caller and queries nothing). **Login is the only public route that accepts a credential.** Every other route is protected, and `public` defaults to false so a new route is protected unless it opts out. The exact public set is pinned by a test. The unverified actor header from slice 1 is **deleted**.
 - **Authorization:** every capability is scoped to the caller's customer, enforced in the module service so HTTP and MCP inherit it identically. A resource belonging to another customer returns `not_found`, never `forbidden` — `forbidden` would confirm the id exists. Threat model: `docs/threat-model-authn-authz.md`.
 - **CSRF:** `SameSite=Strict` plus a required `application/json` content type on state-changing requests, which a cross-site HTML form cannot send.
+- **Audit:** authentication routes are marked `audit` in the route table, so every sign-in and every refusal is logged with the user id, outcome, and trace id. The attempted email's **presence** is recorded, never its value, so the log cannot become a list of who was targeted.
+- **Login cost is bounded** per email address, for unknown addresses as well as known ones — scrypt blocks Node's only thread, so unbounded hashing was a denial-of-service path. See §10 for what remains unbounded.
 - **Session secret:** LOCAL generates an ephemeral key at startup; DEV and SANDBOX **refuse to start** without one supplied at runtime from the secret backend. There is no default key.
 - **Repository permissions:** the working copy is `chmod 700`. `/Users/Shared` is world-readable by default on macOS.
 
@@ -165,6 +167,13 @@ Local, DEV, and a sandbox production-like environment — three local Docker sta
 9. The spine's static mount still reaches into each module's internal `ui/` directory rather than asking the module for it, and `buildApp` still edits in four places per module. Now that three modules exist, a registry is justified and is the first refactor of slice 3.
 10. Authentication carries no password policy, reset flow, or multi-factor option, and only login is rate limited. Accepted for a qualification instrument with no real users; recorded in the threat model's residual risks.
 11. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design through slice 5.
+12. **Login cost is bounded per email address, not globally.** An attacker using many distinct addresses can still consume scrypt capacity, because `scryptSync` blocks Node's only thread. A work queue or upstream rate limit belongs with slice 5.
+13. The `__Host-` cookie prefix is not set, so cookie injection from a sibling host is not closed. Not reachable on loopback; required before DEV or SANDBOX are exposed.
+14. There is no audit log retention or review process — outcomes are emitted, nothing consumes them yet.
+
+### Provenance of this list
+
+Items in this list were found by independent fresh-context review of the slice-1 and slice-2 commits, not by the builder. Slice 2's review contributed items 12 and 13, and drove fixes for a malformed-cookie 500, an untested cookie signature check, missing authentication audit logging, an unbounded login-hashing path, and an MCP tool schema that still demanded the owning tenant.
 
 ### Provenance of this list
 

@@ -24,7 +24,7 @@ Foundation Lab holds no real customer data. The classes above describe how the c
 ## Trust boundaries
 
 1. **Network → application.** Everything in a request is attacker-controlled: path, headers, cookies, body, content type, origin.
-2. **Unauthenticated → authenticated.** Crossed only by `login` presenting a valid credential.
+2. **Unauthenticated → authenticated.** Crossed only by `login` presenting a valid credential. Two other routes are public but cross no boundary: sign-out (which only acts on a signature-verified id) and the session probe (which reports whether the caller is authenticated and queries nothing).
 3. **Tenant → tenant.** An authenticated user of customer A must not reach customer B's data. This is the boundary the reference application most needs to prove, since it is the one real applications get wrong.
 4. **User → elevated operations.** Deferred: slice 2 has no admin role. Stated so its absence is not mistaken for an implemented check.
 
@@ -34,7 +34,7 @@ Foundation Lab holds no real customer data. The classes above describe how the c
 
 - **Forged identity header.** The slice-1 defect: any non-empty header was accepted as identity. **Decision: the actor header is deleted entirely.** Identity comes only from a signed session cookie. No environment retains a header path, so there is no fallback to forget to disable.
 - **Forged or guessed session id.** **Decision:** 256 bits from `crypto.randomBytes`, stored server-side; the cookie carries the id plus an HMAC-SHA-256 signature over it. An unsigned or mis-signed cookie is rejected before any database lookup.
-- **Session fixation.** **Decision:** session ids are generated server-side and a client-supplied id is never adopted, so every login yields a fresh id and fixation is structurally impossible. Existing sessions are deliberately left alive: destroying them would make signing in on a second device sign you out of the first, which is a single-session product policy rather than a security requirement.
+- **Session fixation.** **Decision:** session ids are generated server-side and a client-supplied id is never adopted, so fixation *by id adoption* cannot occur. This does **not** close fixation by cookie injection from a sibling host, whose standard mitigation is the `__Host-` cookie prefix — absent today and not reachable while the application binds to loopback only (SPEC §9). It MUST be added before DEV or SANDBOX are exposed in slice 5. Existing sessions are deliberately left alive: destroying them would make signing in on a second device sign you out of the first, which is a single-session product policy rather than a security requirement.
 
 ### Tampering
 
@@ -55,7 +55,7 @@ Foundation Lab holds no real customer data. The classes above describe how the c
 ### Denial of service
 
 - **Password guessing.** **Decision:** per-account throttling after repeated failures, using a fixed lockout window. Not IP-based: this binds to loopback and IP throttling would be theatre here.
-- **scrypt cost as an amplifier.** Login is the only endpoint that runs scrypt, and throttling bounds it.
+- **scrypt cost as an amplifier.** Login is the only endpoint that runs scrypt. The per-user lockout does NOT bound it: that lockout lives on a user row, so an unknown address could never be throttled, and hashing runs before the lock is honoured for timing symmetry. Measured, an unauthenticated login flood raised an authenticated read from ~1 ms to ~58 ms. **Decision:** an in-memory per-address throttle, consulted before any hashing and keyed regardless of account existence so it reveals nothing. **Residual:** an attacker using many distinct addresses is still bounded only by the machine; closing that needs a work queue or upstream rate limit and belongs with slice 5.
 - **Malformed request crash.** Closed in the slice-1 review fixes; the regression tests stay.
 
 ### Elevation of privilege
@@ -84,6 +84,8 @@ The session signing secret is the application's first real secret.
 4. Sessions are stored in the application database, so horizontal scaling would need a shared store. Single-instance by design in slices 2–5.
 5. No rate limit on non-login endpoints.
 6. `Secure` is absent in LOCAL only; DEV and SANDBOX set it, and those run over loopback TLS or are re-examined in slice 5.
+7. Login work is bounded per email address but not globally: an attacker using many distinct addresses is limited only by the machine. A work queue or upstream rate limit belongs with slice 5.
+8. The `__Host-` cookie prefix is not set, so cookie injection from a sibling host is not closed. Not reachable while binding to loopback only; required before slice 5 exposes DEV or SANDBOX.
 
 Each is recorded in `SPEC.md` §10 so it is disclosed rather than implied.
 
@@ -91,7 +93,7 @@ Each is recorded in `SPEC.md` §10 so it is disclosed rather than implied.
 
 Standard 8 requires authorization tested as behavior across boundaries, not asserted in prose:
 
-- **Function:** an unauthenticated caller reaches no capability except login.
+- **Function:** an unauthenticated caller reaches no capability except the three public session routes. The assertion MUST be derived from the composed route table, not a hand-written list — a hand-written list left five routes uncovered, so marking any of them public passed the whole suite.
 - **Object:** a user cannot read, update, or enumerate a specific project belonging to another customer.
 - **Tenant:** listing returns only the caller's customer's records, proven with two populated customers rather than one.
 - **Field:** a client-supplied `customerId` in a create or update body is ignored in favour of the session's customer.

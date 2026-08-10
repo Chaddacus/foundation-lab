@@ -23,6 +23,7 @@ import type {
   User,
 } from './contract.ts';
 import { DUMMY_VERIFIER, hashPassword, verifyPassword } from './passwords.ts';
+import { LoginThrottle } from './throttle.ts';
 import type { CustomersRepository } from './repository.ts';
 
 /** Injected so tests can pin time and identifiers and assert exact stored values. */
@@ -54,10 +55,16 @@ const LOGIN_FAILED = 'That email and password combination is not correct.';
 export class CustomersService implements CustomersCapability {
   readonly #repository: CustomersRepository;
   readonly #clock: AuthClock;
+  readonly #throttle: LoginThrottle;
 
-  constructor(repository: CustomersRepository, clock: AuthClock = systemAuthClock) {
+  constructor(
+    repository: CustomersRepository,
+    clock: AuthClock = systemAuthClock,
+    throttle: LoginThrottle = new LoginThrottle(),
+  ) {
     this.#repository = repository;
     this.#clock = clock;
+    this.#throttle = throttle;
   }
 
   /**
@@ -75,21 +82,36 @@ export class CustomersService implements CustomersCapability {
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
+    // Bound hashing work BEFORE any scrypt call. The per-user lockout below cannot help
+    // here: it lives on a user row, so an unknown address could never be throttled and
+    // could drive unlimited scrypt on the single Node thread.
+    //
+    // Throttling is keyed by address regardless of whether an account exists, so it reveals
+    // nothing about account existence — and it is checked before hashing precisely so that
+    // the expensive work is what gets bounded.
+    if (!this.#throttle.allow(email)) {
+      throw new AppError('unauthorized', LOGIN_FAILED);
+    }
+
     const now = this.#clock.now();
     const row = this.#repository.findUserRowByEmail(email);
 
     if (row === null) {
       verifyPassword(password, DUMMY_VERIFIER);
+      this.#throttle.recordFailure(email);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
     // A locked account still pays the hashing cost, so lockout is not detectable by timing.
+    // The throttle above is what bounds total work; this comparison is about not leaking
+    // lock state through response time, and the two concerns are deliberately separate.
     const lockedUntil = row.locked_until === null ? null : new Date(row.locked_until);
     const isLocked = lockedUntil !== null && lockedUntil > now;
 
     const passwordMatches = verifyPassword(password, row.password_verifier);
 
     if (isLocked || !passwordMatches) {
+      this.#throttle.recordFailure(email);
       if (!isLocked) this.#recordFailure(row.id, row.failed_attempts, now);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }

@@ -77,7 +77,10 @@ export function normalizeCreate(input: CreateReleaseInput): NormalizedRelease {
  * retrying could ever help.
  */
 export function assertTransitionAllowed(from: ReleaseStatus, to: ReleaseStatus): void {
-  if (!(to in ALLOWED_TRANSITIONS)) {
+  // Own-property check: `in` walks the prototype chain, so names like `constructor`
+  // and `toString` were treated as real statuses and refused as `conflict` — telling a
+  // client that retrying might help, for an input that is not a status at all.
+  if (!Object.hasOwn(ALLOWED_TRANSITIONS, to)) {
     throw AppError.validation(`"${to}" is not a release status.`);
   }
   if (from === to) {

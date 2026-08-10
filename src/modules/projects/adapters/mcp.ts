@@ -63,9 +63,11 @@ export const projectsTools: readonly McpTool[] = [
       properties: {
         name: { type: 'string', description: 'Project name.' },
         description: { type: 'string', description: 'Optional project description.' },
-        customerId: { type: 'string', description: 'Id of the owning customer.' },
       },
-      required: ['name', 'customerId'],
+      // No `customerId`. Ownership comes from the authenticated session, and a tool schema
+      // that asked for it would tell an LLM client that choosing the owning tenant is its
+      // job — exactly the authority signal Standard 9 says a tool must not carry.
+      required: ['name'],
       additionalProperties: false,
     },
     sideEffect: 'write',

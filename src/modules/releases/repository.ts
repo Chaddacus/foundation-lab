@@ -78,7 +78,7 @@ export class ReleasesRepository {
   listByProject(projectId: string, customerId: string): readonly Release[] {
     const rows = this.#db
       .prepare('SELECT * FROM releases WHERE project_id = ? AND customer_id = ? ORDER BY created_at DESC, id DESC')
-      .all(projectId, customerId) as ReleaseRow[];
+      .all(projectId, customerId) as unknown as ReleaseRow[];
     return rows.map(toRelease);
   }
 

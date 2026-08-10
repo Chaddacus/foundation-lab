@@ -87,7 +87,7 @@ export class ProjectsRepository {
   listByCustomer(customerId: string): readonly Project[] {
     const rows = this.#db
       .prepare('SELECT * FROM projects WHERE customer_id = ? ORDER BY created_at DESC, id DESC')
-      .all(customerId) as ProjectRow[];
+      .all(customerId) as unknown as ProjectRow[];
     return rows.map(toProject);
   }
 

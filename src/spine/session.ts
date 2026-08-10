@@ -48,7 +48,15 @@ export function verifySessionCookie(value: string, secret: string): string | nul
   return timingSafeEqual(presented, expected) ? sessionId : null;
 }
 
-/** Read one cookie from a `Cookie` header. Returns null when absent or malformed. */
+/**
+ * Read one cookie from a `Cookie` header. Returns null when absent or malformed.
+ *
+ * Decoding is TOTAL. `decodeURIComponent` throws on a malformed escape, and the cookie
+ * header is entirely attacker-controlled: an unguarded call turned `Cookie: …=%` into a 500
+ * plus an ERROR log on every endpoint, including public ones, so an unauthenticated caller
+ * could drive the error rate at will. A malformed cookie is an unauthenticated request, not
+ * a server fault.
+ */
 export function readCookie(header: string | undefined, name: string): string | null {
   if (header === undefined) return null;
 
@@ -56,7 +64,12 @@ export function readCookie(header: string | undefined, name: string): string | n
     const separator = part.indexOf('=');
     if (separator === -1) continue;
     if (part.slice(0, separator).trim() === name) {
-      return decodeURIComponent(part.slice(separator + 1).trim());
+      const raw = part.slice(separator + 1).trim();
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return null;
+      }
     }
   }
   return null;

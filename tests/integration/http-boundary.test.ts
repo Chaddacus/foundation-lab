@@ -223,19 +223,37 @@ describe('error boundary fails closed', () => {
 describe('authentication at the boundary', () => {
   // FUNCTION boundary (Standard 8): an unauthenticated caller reaches no capability.
 
-  test('every capability route refuses an unauthenticated caller', async () => {
-    const protectedRequests: [string, RequestInit][] = [
-      ['/api/projects', {}],
-      ['/api/projects/anything', {}],
-      ['/api/users', {}],
-      ['/api/meta', {}],
-      ['/api/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"name":"x"}' }],
-    ];
+  test('every non-public route in the composed table refuses an unauthenticated caller', async () => {
+    // DERIVED from the route table, not hand-listed. A hand-written list left five routes
+    // uncovered, so marking any of them `public: true` passed the entire suite. Deriving it
+    // means a new route is covered the moment it is registered.
+    const protectedRoutes = app.routes.filter((route) => route.public !== true);
+    assert.ok(protectedRoutes.length >= 8, `only ${protectedRoutes.length} protected routes discovered`);
 
-    for (const [path, init] of protectedRequests) {
+    for (const route of protectedRoutes) {
+      const path = route.pattern.replace(/:[a-zA-Z]+/g, 'placeholder-id');
+      const init: RequestInit = route.method === 'GET'
+        ? { method: 'GET' }
+        : { method: route.method, headers: { 'content-type': 'application/json' }, body: '{}' };
+
       const response = await fetch(`${baseUrl}${path}`, init);
-      assert.equal(response.status, 401, `${init.method ?? 'GET'} ${path} was reachable anonymously`);
+      assert.equal(response.status, 401, `${route.method} ${route.pattern} was reachable anonymously`);
     }
+  });
+
+  test('the public route set is exactly the three session routes', async () => {
+    // Pinned deliberately: `public: true` is the one flag that turns off authentication, so
+    // the set must be reviewed rather than grown by accident.
+    const publicRoutes = app.routes
+      .filter((route) => route.public === true)
+      .map((route) => `${route.method} ${route.pattern}`)
+      .sort();
+
+    assert.deepEqual(publicRoutes, [
+      'DELETE /api/session',
+      'GET /api/session',
+      'POST /api/session',
+    ]);
   });
 
   test('login is the only unauthenticated capability, and it sets a hardened cookie', async () => {
@@ -259,6 +277,27 @@ describe('authentication at the boundary', () => {
     const forged = `${SESSION_COOKIE}=someone-elses-session.deadbeefsignature`;
     const response = await fetch(`${baseUrl}/api/projects`, { headers: { cookie: forged } });
     assert.equal(response.status, 401);
+  });
+
+  test('a REAL session id with a wrong signature is refused', async () => {
+    // The gap this closes: the previous forgery test used a fabricated session id, which
+    // returns 401 whether or not the signature is verified — so deleting the HMAC check
+    // entirely passed the whole suite. This presents a genuinely valid session id with a
+    // wrong signature of the correct length, which only signature verification can reject.
+    const real = decodeURIComponent(cookie.split('=').slice(1).join('='));
+    const [sessionId, signature] = [real.slice(0, real.lastIndexOf('.')), real.slice(real.lastIndexOf('.') + 1)];
+
+    // Same length, different bytes — so a length check alone cannot account for the refusal.
+    const wrongSignature = signature.replace(/./, (character) => (character === 'A' ? 'B' : 'A'));
+    assert.equal(wrongSignature.length, signature.length);
+    assert.notEqual(wrongSignature, signature);
+
+    const forged = `${SESSION_COOKIE}=${encodeURIComponent(`${sessionId}.${wrongSignature}`)}`;
+    assert.equal((await fetch(`${baseUrl}/api/projects`, { headers: { cookie: forged } })).status, 401);
+
+    // The same id WITH its real signature still works, proving the id itself was valid and
+    // the refusal above came from the signature.
+    assert.equal((await fetch(`${baseUrl}/api/projects`, authed(cookie))).status, 200);
   });
 
   test('an unsigned session id is refused, so knowing a real id is not enough', async () => {
@@ -300,6 +339,50 @@ describe('authentication at the boundary', () => {
     assert.equal(unknown.status, 401);
     assert.equal(wrongPassword.status, 401);
     assert.equal((await unknown.json()).error.message, (await wrongPassword.json()).error.message);
+  });
+});
+
+describe('a malformed cookie is an unauthenticated request, not a server fault', () => {
+  // Regression: `decodeURIComponent` on the attacker-controlled cookie header threw, and the
+  // URIError fell through to the generic 500 branch — which also emitted an ERROR log. An
+  // unauthenticated caller could drive the 5xx rate and log volume of every endpoint,
+  // including public ones, with a one-character header.
+
+  test('a malformed cookie escape yields 401 on a protected route, never 500', async () => {
+    for (const value of ['%', '%zz', '%e0%a4%a', 'a%', '%%']) {
+      const response = await fetch(`${baseUrl}/api/projects`, {
+        headers: { cookie: `${SESSION_COOKIE}=${value}` },
+      });
+      assert.equal(response.status, 401, `cookie "${value}" produced ${response.status}`);
+    }
+  });
+
+  test('a malformed cookie does not disturb a public route', async () => {
+    const response = await fetch(`${baseUrl}/api/session`, {
+      headers: { cookie: `${SESSION_COOKIE}=%` },
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).data.authenticated, false);
+  });
+
+  test('a malformed cookie alongside other cookies is still non-fatal', async () => {
+    const response = await fetch(`${baseUrl}/api/projects`, {
+      headers: { cookie: `other=fine; ${SESSION_COOKIE}=%; another=also-fine` },
+    });
+    assert.equal(response.status, 401);
+  });
+
+  test('the server keeps serving after malformed cookies', async () => {
+    assert.equal((await fetch(`${baseUrl}/api/projects`, authed(cookie))).status, 200);
+  });
+});
+
+describe('the anonymous sentinel', () => {
+  test('carries no tenant, which every authorization check relies on', async () => {
+    // A one-word change to a non-empty customer id would silently make anonymous callers
+    // members of a tenant. The invariant is load-bearing, so it is pinned.
+    const { ANONYMOUS_CUSTOMER_ID } = await import('../../src/spine/http.ts');
+    assert.equal(ANONYMOUS_CUSTOMER_ID, '');
   });
 });
 

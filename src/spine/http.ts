@@ -20,16 +20,19 @@ import type { Actor } from './actor.ts';
 import { readCookie, verifySessionCookie, SESSION_COOKIE } from './session.ts';
 import type { Config } from './config.ts';
 
+import { ATTR_APP_MODULE, currentTraceId, usableTraceId } from './telemetry.ts';
+import type { Logger } from './logger.ts';
+
 /**
  * Placeholder actor for public routes.
  *
- * Its empty `customerId` matches no tenant, so if it ever reaches a capability that
- * compares customers, every comparison fails and the request is denied. It is inert by
- * construction rather than by the caller remembering to check for it.
+ * INVARIANT: `customerId` MUST remain the empty string. Every tenant check compares against
+ * it, and `requireTenant` in each module refuses it explicitly. Giving this sentinel a
+ * non-empty customer id would silently make anonymous callers members of a tenant — pinned
+ * by a test, because it is a one-word change with an outsized blast radius.
  */
-const ANONYMOUS: Actor = { id: 'anonymous', customerId: '' };
-import { ATTR_APP_MODULE, currentTraceId, usableTraceId } from './telemetry.ts';
-import type { Logger } from './logger.ts';
+export const ANONYMOUS_CUSTOMER_ID = '';
+const ANONYMOUS: Actor = { id: 'anonymous', customerId: ANONYMOUS_CUSTOMER_ID };
 
 export interface RequestContext {
   readonly actor: Actor;
@@ -42,7 +45,7 @@ export interface RequestContext {
 }
 
 export interface Route {
-  readonly method: 'GET' | 'POST' | 'PATCH';
+  readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   /** Path pattern with `:name` segments, e.g. `/api/projects/:id`. */
   readonly pattern: string;
   /** The owning capability module, recorded on the span as `app.module`. */
@@ -57,6 +60,15 @@ export interface Route {
    * it deliberately opts out — forgetting the flag denies access rather than granting it.
    */
   readonly public?: boolean;
+  /**
+   * Record every outcome of this route, not only failures.
+   *
+   * Set on authentication routes so there is an audit trail of who signed in and when, and
+   * of refused attempts — including the lockout events the Customers module implements.
+   * Declared here rather than logged inside the module so the spine keeps ownership of
+   * logging and a module cannot quietly stop emitting it.
+   */
+  readonly audit?: boolean;
 }
 
 /** Maps the application error vocabulary onto HTTP. The only place that translation happens. */
@@ -122,6 +134,9 @@ export function createRequestListener(
       span.setAttribute('http.route', route.pattern);
 
       const cookies: string[] = [];
+      // Captured so an audited FAILURE can still report whether a credential was presented.
+      // The value never leaves this function; only its presence is logged.
+      let bodyForAudit: unknown;
 
       try {
         // CSRF control, paired with SameSite=Strict on the session cookie: a cross-site
@@ -144,6 +159,7 @@ export function createRequestListener(
         if (actor !== null) span.setAttribute('enduser.id', actor.id);
 
         const body = route.method === 'GET' ? undefined : await readJsonBody(req);
+        bodyForAudit = body;
         // Awaited even though slice-1 handlers are synchronous: `Route` is the spine's
         // extension point, and an un-awaited async handler would serialize an empty object
         // on success and let its rejection escape the boundary entirely.
@@ -158,12 +174,36 @@ export function createRequestListener(
         });
 
         span.setStatus({ code: SpanStatusCode.OK });
+
+        if (route.audit === true) {
+          // Identifiers and outcome only. The email is NEVER logged — its presence is, so a
+          // malformed request is distinguishable from a wrong credential without recording
+          // who was targeted (threat model, Repudiation).
+          logger.info(`${route.operation} succeeded`, {
+            module: route.module,
+            operation: route.operation,
+            outcome: 'success',
+            enduser_id: (result as { userId?: string })?.userId ?? actor?.id ?? '',
+            credential_supplied: hasCredential(body),
+          });
+        }
+
         sendJson(res, route.successStatus ?? 200, { data: result }, cookies);
       } catch (error) {
         const { status, payload } = translateError(error, span.spanContext().traceId);
         // Record the outcome on the span, never the request body — data minimization (SPEC §8).
         span.setStatus({ code: SpanStatusCode.ERROR, message: payload.error.kind });
         span.setAttribute('error.type', payload.error.kind);
+        if (route.audit === true) {
+          logger.info(`${route.operation} refused`, {
+            module: route.module,
+            operation: route.operation,
+            outcome: 'refused',
+            error_type: payload.error.kind,
+            credential_supplied: hasCredential(bodyForAudit),
+          });
+        }
+
         if (status >= 500) {
           logger.error(error instanceof Error ? error.message : String(error), {
             module: route.module,
@@ -278,6 +318,18 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   } catch {
     throw AppError.validation('That request body is not valid JSON.');
   }
+}
+
+/**
+ * Whether a request body carried an email credential at all.
+ *
+ * Returns a BOOLEAN, never the address. The threat model requires the attempted email's
+ * presence to be recorded, not its value, so a log cannot become a list of who was targeted.
+ */
+function hasCredential(body: unknown): boolean {
+  return typeof body === 'object' && body !== null
+    && typeof (body as { email?: unknown }).email === 'string'
+    && (body as { email: string }).email.trim() !== '';
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown, cookies: string[] = []): void {

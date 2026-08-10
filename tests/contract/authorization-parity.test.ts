@@ -151,6 +151,40 @@ describe('the MCP tool surface stays bounded', () => {
     assert.equal(new Set(names).size, names.length, `duplicate tool name: ${names.join(', ')}`);
   });
 
+  test('no tool schema asks the client to supply the owning tenant', () => {
+    // A tool schema is an instruction to an LLM client. `create_project` required
+    // `customerId` for a whole slice after ownership moved to the session — telling a client
+    // that choosing the tenant was its job, which is the authority signal Standard 9 says a
+    // tool must not carry. The service ignored the value, so no test noticed.
+    for (const tool of allTools()) {
+      const schema = tool.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+      const ownershipFields = ['customerId', 'customer_id', 'tenantId', 'ownerId'];
+
+      for (const field of ownershipFields) {
+        assert.ok(
+          !(schema.properties && field in schema.properties),
+          `${tool.name} accepts "${field}" — ownership comes from the session, not the client`,
+        );
+        assert.ok(
+          !(schema.required ?? []).includes(field),
+          `${tool.name} REQUIRES "${field}"`,
+        );
+      }
+    }
+  });
+
+  test('no tool schema asks the client to supply server-owned lifecycle or identity fields', () => {
+    for (const tool of allTools()) {
+      const schema = tool.inputSchema as { properties?: Record<string, unknown> };
+      for (const field of ['createdAt', 'updatedAt']) {
+        assert.ok(
+          !(schema.properties && field in schema.properties),
+          `${tool.name} accepts "${field}", which the server owns`,
+        );
+      }
+    }
+  });
+
   test('provisioning is deliberately absent from every adapter', () => {
     // There is no admin role in slice 2, so no authenticated caller may create tenants or
     // accounts. Provisioning exists only on the module object, for the seed and tests.

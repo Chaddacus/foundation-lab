@@ -18,6 +18,12 @@ import {
   SESSION_TTL_MS,
   type AuthClock,
 } from '../../src/modules/customers/service.ts';
+import {
+  LoginThrottle,
+  THROTTLE_MAX_ATTEMPTS,
+  THROTTLE_WINDOW_MS,
+  type ThrottleClock,
+} from '../../src/modules/customers/throttle.ts';
 import type { AppError } from '../../src/spine/errors.ts';
 
 const PASSWORD = 'correct-horse-battery-staple';
@@ -34,16 +40,31 @@ function testClock(): AuthClock & { advance: (ms: number) => void } {
   };
 }
 
+/** Separate clock for the throttle, whose window is measured in milliseconds since epoch. */
+function throttleTestClock(): ThrottleClock & { advance: (ms: number) => void } {
+  let current = 1_000_000;
+  return { now: () => current, advance: (ms: number) => { current += ms; } };
+}
+
 let clock: ReturnType<typeof testClock>;
+let throttleClock: ReturnType<typeof throttleTestClock>;
+let repository: CustomersRepository;
 let service: CustomersService;
 let customerId: string;
+
+/** Build a service sharing the seeded database, with an injectable throttle. */
+function buildService(throttle: LoginThrottle): CustomersService {
+  return new CustomersService(repository, clock, throttle);
+}
 
 beforeEach(() => {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   applyMigrations(db, [migration]);
   clock = testClock();
-  service = new CustomersService(new CustomersRepository(db), clock);
+  throttleClock = throttleTestClock();
+  repository = new CustomersRepository(db);
+  service = new CustomersService(repository, clock);
 
   customerId = service.provisionCustomer('Acme').id;
   service.provisionUser(customerId, 'ana@acme.test', PASSWORD);
@@ -97,6 +118,53 @@ describe('login', () => {
     const first = service.login({ email: 'ana@acme.test', password: PASSWORD });
     service.login({ email: 'ana@acme.test', password: PASSWORD });
     assert.notEqual(service.resolveSession(first.sessionId), null, 'the first device was signed out');
+  });
+});
+
+describe('login consults the throttle', () => {
+  // The gap this closes: the throttle had thorough unit tests, but nothing asserted that
+  // `login` actually calls it. Deleting the check from `login` passed the whole suite —
+  // the DoS bound existed as a class nobody used.
+
+  test('a throttled address is refused even with the correct password', () => {
+    const throttle = new LoginThrottle(throttleClock);
+    const service = buildService(throttle);
+
+    for (let attempt = 0; attempt < THROTTLE_MAX_ATTEMPTS; attempt += 1) {
+      throttle.recordFailure('ana@acme.test');
+    }
+
+    // The correct password would otherwise succeed, so refusal can only come from the
+    // throttle being consulted.
+    assert.throws(
+      () => service.login({ email: 'ana@acme.test', password: PASSWORD }),
+      (error: AppError) => error.kind === 'unauthorized',
+    );
+  });
+
+  test('the same address succeeds once the window reopens', () => {
+    const throttle = new LoginThrottle(throttleClock);
+    const service = buildService(throttle);
+
+    for (let attempt = 0; attempt < THROTTLE_MAX_ATTEMPTS; attempt += 1) {
+      throttle.recordFailure('ana@acme.test');
+    }
+    throttleClock.advance(THROTTLE_WINDOW_MS + 1);
+
+    assert.ok(service.login({ email: 'ana@acme.test', password: PASSWORD }).sessionId);
+  });
+
+  test('failed logins feed the throttle, including for addresses with no account', () => {
+    const throttle = new LoginThrottle(throttleClock);
+    const service = buildService(throttle);
+
+    for (let attempt = 0; attempt < THROTTLE_MAX_ATTEMPTS; attempt += 1) {
+      try { service.login({ email: 'ghost@nowhere.test', password: 'wrong' }); } catch { /* expected */ }
+    }
+
+    // An address with no user row can still be throttled — the per-user lockout could not
+    // do this, which is why unknown addresses could previously drive unlimited hashing.
+    assert.equal(throttle.allow('ghost@nowhere.test'), false);
   });
 });
 

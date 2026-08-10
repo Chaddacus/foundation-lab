@@ -26,8 +26,10 @@ export function customersRoutes(customers: CustomersCapability, config: Config):
       pattern: '/api/session',
       module: MODULE,
       operation: 'login',
-      // The only unauthenticated capability in the application.
+      // One of three public routes (login, sign-out, session probe). It is the only one
+      // that accepts a credential, which is the property that actually matters.
       public: true,
+      audit: true,
       successStatus: 201,
       handler: ({ body, setCookie }) => {
         const grant = customers.login(body as LoginInput);
@@ -53,6 +55,7 @@ export function customersRoutes(customers: CustomersCapability, config: Config):
       // Public so signing out with an already-expired session still clears the cookie
       // rather than returning 401 and leaving a dead cookie in the browser.
       public: true,
+      audit: true,
       handler: ({ sessionId, setCookie }) => {
         if (sessionId !== null) customers.logout(sessionId);
         setCookie(buildClearedSessionCookie(config));

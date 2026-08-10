@@ -99,7 +99,7 @@ export class CustomersRepository {
   listUsersByCustomer(customerId: string): readonly User[] {
     const rows = this.#db
       .prepare('SELECT * FROM users WHERE customer_id = ? ORDER BY email')
-      .all(customerId) as UserRow[];
+      .all(customerId) as unknown as UserRow[];
     return rows.map(toUser);
   }
 
