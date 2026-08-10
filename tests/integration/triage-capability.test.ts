@@ -52,7 +52,7 @@ let ana: Actor;
 let gil: Actor;
 let incidentId: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   gateway = new ScriptedGateway();
   app = buildApp(
     loadConfig({ FL_DATABASE_PATH: ':memory:', FL_OTLP_ENDPOINT: '', FL_SESSION_SECRET: 'triage-secret' }),
@@ -62,10 +62,10 @@ beforeEach(() => {
   const provisioning = app.modules.customers.provisioning;
   const acme = provisioning.provisionCustomer('Acme');
   const globex = provisioning.provisionCustomer('Globex');
-  provisioning.provisionUser(acme.id, 'ana@acme.test', PASSWORD);
-  provisioning.provisionUser(globex.id, 'gil@globex.test', PASSWORD);
-  ana = app.modules.customers.capability.login({ email: 'ana@acme.test', password: PASSWORD }).actor;
-  gil = app.modules.customers.capability.login({ email: 'gil@globex.test', password: PASSWORD }).actor;
+  await provisioning.provisionUser(acme.id, 'ana@acme.test', PASSWORD);
+  await provisioning.provisionUser(globex.id, 'gil@globex.test', PASSWORD);
+  ana = (await app.modules.customers.capability.login({ email: 'ana@acme.test', password: PASSWORD })).actor;
+  gil = (await app.modules.customers.capability.login({ email: 'gil@globex.test', password: PASSWORD })).actor;
 
   incidentId = app.modules.incidents.capability.createIncident(ana, {
     title: 'Project creation failing',

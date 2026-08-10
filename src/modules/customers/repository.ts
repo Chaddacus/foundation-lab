@@ -103,10 +103,25 @@ export class CustomersRepository {
     return rows.map(toUser);
   }
 
-  recordFailedAttempt(userId: string, failedAttempts: number, lockedUntil: string | null): void {
+  /**
+   * Increment the failed-attempt count and, in the SAME statement, set the lock the instant
+   * the count crosses the threshold.
+   *
+   * Atomic on purpose: a read-modify-write in application code across the async hash let
+   * concurrent failures each read a stale count and overwrite it with the same value, so the
+   * lock never tripped. `failed_attempts = failed_attempts + 1` reads and writes inside one
+   * SQL statement, so the count is correct no matter how many attempts race. `locked_until`
+   * is only ever set (never cleared) here; `clearFailedAttempts` owns the reset.
+   */
+  recordFailedAttempt(userId: string, maxAttempts: number, lockedUntilIfTripped: string): void {
     this.#db
-      .prepare('UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?')
-      .run(failedAttempts, lockedUntil, userId);
+      .prepare(
+        `UPDATE users
+         SET failed_attempts = failed_attempts + 1,
+             locked_until = CASE WHEN failed_attempts + 1 >= ? THEN ? ELSE locked_until END
+         WHERE id = ?`,
+      )
+      .run(maxAttempts, lockedUntilIfTripped, userId);
   }
 
   clearFailedAttempts(userId: string): void {

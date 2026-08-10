@@ -40,7 +40,7 @@ export const ACME = { email: 'ana@acme.test', password: 'e2e-acme-password', cus
 export const GLOBEX = { email: 'gil@globex.test', password: 'e2e-globex-password', customer: 'Globex Corporation' };
 
 /** Reset and seed. Safe to call repeatedly; each run starts from a known state. */
-export function seedFixture(): void {
+export async function seedFixture(): Promise<void> {
   for (const suffix of ['', '-wal', '-shm']) {
     rmSync(`${DATABASE}${suffix}`, { force: true });
   }
@@ -53,12 +53,12 @@ export function seedFixture(): void {
 
   for (const account of [ACME, GLOBEX]) {
     const customer = app.modules.customers.provisioning.provisionCustomer(account.customer);
-    app.modules.customers.provisioning.provisionUser(customer.id, account.email, account.password);
+    await app.modules.customers.provisioning.provisionUser(customer.id, account.email, account.password);
   }
 
   // Globex owns a project so cross-tenant isolation is observable in the browser: if it
   // ever appears in Acme's list, the tenant filter is broken and the proof catches it.
-  const globex = app.modules.customers.capability.login({
+  const globex = await app.modules.customers.capability.login({
     email: GLOBEX.email,
     password: GLOBEX.password,
   });

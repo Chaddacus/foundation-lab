@@ -184,10 +184,22 @@ test.describe('forced colours', () => {
     // claiming that survived forced colours. Forced colours removes box-shadow, so the
     // selected and unselected rows rendered identically.
     await signIn(page);
-    await page.getByLabel('Project name').fill('Forced colours subject');
-    await page.getByTestId('create-submit').click();
-    await expect(page.getByTestId('project-list')).toBeVisible();
+    // TWO projects, because the assertion below compares a selected row against an
+    // unselected one. With a single row there is nothing to compare against and the test
+    // reports a missing comparator rather than a real result.
+    for (const name of ['Forced colours subject', 'Forced colours comparator']) {
+      await page.getByLabel('Project name').fill(name);
+      await page.getByTestId('create-submit').click();
+      await expect(page.getByTestId('project-list')).toBeVisible();
+    }
     await page.getByTestId('select-project').first().click();
+
+    // Wait for selection to actually land before changing the media emulation. Without this
+    // the test raced the re-render: it passed locally and failed in CI with "no row is
+    // marked selected", which is a flaky test — a defect in the test, not a reason to re-run
+    // it until green.
+    await expect(page.locator('[data-testid="project-row"][aria-current]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="project-row"]:not([aria-current])')).not.toHaveCount(0);
 
     await page.emulateMedia({ forcedColors: 'active' });
 

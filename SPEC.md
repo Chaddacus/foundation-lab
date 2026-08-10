@@ -1,6 +1,6 @@
 # SPEC.md — Foundation Lab
 
-**Status:** slice 5 complete (release artifact identity, DEV deployed and validated, sandbox-prod defined). Awaiting Human Gate #1. This file is the canonical current specification for this repository. Documentation under `docs/` is subordinate to it. Historical plans and handoffs do not outrank this file or the live system.
+**Status:** slice 6 complete. Both human gates have been exercised on a real promotion: Gate #1 authorized the exact head of PR #11, `959fa58` (merged to `main` as `4487e58`), and Gate #2 authorized artifact `sha256:7cad7e5d…` to sandbox-prod, which is **deployed and LIVE VERIFIED**. This file is the canonical current specification for this repository. Documentation under `docs/` is subordinate to it. Historical plans and handoffs do not outrank this file or the live system.
 
 ## 1. Purpose
 
@@ -168,7 +168,7 @@ Meaningful frontend work requires browser-grounded proof, and the evidence must 
 - **Authorization:** every capability is scoped to the caller's customer, enforced in the module service so HTTP and MCP inherit it identically. A resource belonging to another customer returns `not_found`, never `forbidden` — `forbidden` would confirm the id exists. Threat model: `docs/threat-model-authn-authz.md`.
 - **CSRF:** `SameSite=Strict` plus a required `application/json` content type on state-changing requests, which a cross-site HTML form cannot send.
 - **Audit:** authentication routes are marked `audit` in the route table, so every sign-in and every refusal is logged with the user id, outcome, and trace id. The attempted email's **presence** is recorded, never its value, so the log cannot become a list of who was targeted.
-- **Login cost is bounded** per email address, for unknown addresses as well as known ones — scrypt blocks Node's only thread, so unbounded hashing was a denial-of-service path. See §10 for what remains unbounded.
+- **Login cost is bounded** both per email address AND globally. Password hashing runs off the main thread (async scrypt) and behind a global concurrency gate that sheds excess as a retryable 503, so neither a single address nor a flood of distinct addresses can starve the service. See §10 item 7 for the residual (a flood can shed legitimate logins).
 - **Session secret:** LOCAL generates an ephemeral key at startup; DEV and SANDBOX **refuse to start** without one supplied at runtime from the secret backend. There is no default key.
 - **Repository permissions:** the working copy is `chmod 700`. `/Users/Shared` is world-readable by default on macOS.
 
@@ -201,14 +201,18 @@ Three local Docker stacks on loopback, colocated with the Elastic stack:
 | Environment | Port | State |
 |---|---|---|
 | LOCAL | 4310 | run from source; ephemeral session secret |
-| DEV | 4320 | deployed and validated |
-| SANDBOX | 4330 | defined and config-validated; **never deployed** — that is Gate #2 |
+| DEV | 4320 | running the released artifact, verified against it |
+| SANDBOX | 4330 | **deployed and LIVE VERIFIED** — `main-3` @ `4487e58`, digest `sha256:7cad7e5d…` |
 
 The sandbox is not real customer production. It exists to prove release gates and bounded self-healing safely.
 
 **Release identity.** Build once, promote the same artifact. The identity is the image **digest**, not a tag — a tag can be repointed at different bytes. The base image is pinned by digest for the same reason, and the build refuses a dirty working tree, because a stamped revision that does not describe the contents ties the artifact to nothing.
 
-The digest is supplied at deploy time and reported by `/api/meta` and in every span, so a running deployment always states which artifact it actually is. That claim is verified, not assumed: the live DEV deployment reports the exact digest that was built.
+The digest is supplied at deploy time and reported by `/api/meta` and in every span, so a running deployment always states which artifact it actually is. That claim is verified, not assumed, and it has now been carried end to end on a real promotion: the artifact built from `main` at `4487e58` was deployed to DEV, validated, then authorized through Gate #2 and deployed to sandbox-prod, where `scripts/verify-deployment.ts` confirms the running process reports that exact digest and revision. Elastic carries the same digest on live sandbox spans, so an approval, a commit, a build attestation, a running process and a trace all join on one identity.
+
+The digest check was **falsified before it was trusted**, against sandbox itself and not merely against DEV: re-run with a wrong digest, and again with a wrong revision, it fails each time and names both the running and the expected value. Run with no expectations at all it reports SKIPPED, not PASS.
+
+That last behaviour is a fix, not a design. The expectations were optional, so the identity check could report PASS having compared nothing — a 4-of-4 result proving only that sign-in worked — and every recorded form of the command, including the one `authorize-deploy` prints to the operator, omitted them. Independent review found it. `scripts/verify-deployment.ts` now fails closed, and the declared commands in `.claude/verification.json` and `release.yml` carry the expectations.
 
 **Container posture:** non-root, read-only root filesystem, `no-new-privileges`, all capabilities dropped, published to `127.0.0.1` only. The process binds `0.0.0.0` *inside* its container — otherwise the published port is unreachable — and the loopback-only guarantee is held one level up by the host publish address.
 
@@ -220,9 +224,15 @@ The digest is supplied at deploy time and reported by `/api/meta` and in every s
 
 **Gate #1 is mechanically enforced** by the `gate1-main` repository ruleset on `Chaddacus/foundation-lab`: pull request required, one approving review, stale reviews dismissed on push, last-push approval required, the `verify` check required, force-push and deletion blocked, and **no bypass actors**. Proven, not assumed — a direct push to `main` was attempted during setup and rejected by the server citing those rules.
 
-**Automation identity.** Builder and approver are separate accounts, which is what makes Gate #1's review requirement meaningful rather than ceremonial. The `foundation-lab-bot` GitHub App (App ID 4546134) holds `contents: write` and `pull_requests: write` on this repository and nothing else — no admin, no ruleset authority, no bypass. It pushes branches, opens pull requests, and merges into `dev`. It **cannot** approve a pull request and **cannot** merge to `main`.
+**Automation identity.** Builder and approver are separate accounts, which is what makes Gate #1's review requirement meaningful rather than ceremonial. The `foundation-lab-bot` GitHub App (App ID 4546134) holds `contents: write` and `pull_requests: write` on this repository and nothing else — no admin, no ruleset authority, no bypass. It pushes branches, opens pull requests, and merges into `dev`.
 
-The human approver's account never authors the changes it approves. GitHub enforces both halves of this independently of any configuration here: it refuses self-approval outright, and the `require_last_push_approval` rule means the account that made the most recent push cannot be the one that approves it. Both were confirmed by attempting them.
+**What is enforced, stated precisely.** The bot **cannot supply the approving review**, and `gate1-main` requires one. It therefore cannot promote anything to `main` that a human has not approved. It **can** perform the merge itself once that approval exists, and it did: PR #11 was merged to `main` by `foundation-lab-bot[bot]` after `Chaddacus` approved it.
+
+An earlier version of this section claimed the bot "cannot merge to `main`" and that "GitHub enforces both halves". The first is false — `gate1-main` restricts *what* may merge, not *who* performs the merge, and the ruleset contains no actor restriction. Independent review caught it by checking the release this document describes. The control that matters is intact; the description of it was wider than the control.
+
+The human approver's account never authors the changes it approves. That half is genuinely enforced by GitHub independently of any configuration here: it refuses self-approval outright, and `require_last_push_approval` means the account that made the most recent push cannot be the one that approves it. Both were confirmed by attempting them.
+
+**Two residual weaknesses in the approver's position**, disclosed rather than implied: the `sandbox-prod` environment has `can_admins_bypass: true` and `prevent_self_review: false`, and the approver is the repository owner. Neither was exercised, but neither is prevented by configuration.
 
 The App's private key lives outside the repository under the operator's control. Only short-lived installation tokens — one hour — are ever used, and the durable credential is never held by automation.
 
@@ -232,11 +242,17 @@ It authorizes rather than deploys, deliberately: sandbox-prod is loopback-only o
 
 This was briefly not enforceable — required-reviewer protection is unavailable for private repositories on a free plan, and an environment created without that rule exists while enforcing nothing. That empty environment was verified and deleted rather than left as a false control; the repository was then made public and the rule confirmed present before the job was restored.
 
+**Both gates have now been exercised on a real promotion**, which is the only thing that distinguishes a control from a description of one. Gate #1 blocked **the merge of PR #11** until the approver authorized its exact head, `959fa58`; the release run exists only because that merge then happened, so the gate acts on the merge and not on the run. Gate #2 held `authorize-deploy` on run `31395109475` for 58 minutes until the approver authorized artifact `sha256:7cad7e5d…`. Gate #2 had previously fired on a dispatched build and blocked correctly there too; that run was cancelled rather than approved, because a feature-branch artifact is not a deployment decision.
+
+**Backup and restore.** `scripts/backup-environment.ts` takes a verified point-in-time snapshot without stopping the service, using SQLite's `VACUUM INTO` rather than a file copy — the database runs in WAL mode, so a filesystem copy can produce a torn snapshot that still opens, which is the failure mode that looks fine until a restore. The snapshot is integrity-checked and row-count-compared before the command exits, and it records the environment, version, revision and artifact digest it was taken from.
+
+`scripts/restore-environment.ts` is the other half, and the reason the first exists. It verifies the backup **before** stopping anything, and stops the container rather than swapping the file under a live process holding the old inode. Procedure and the drill that proves it: `docs/release/backup-and-restore.md`. Restoring is not verifying — `verify-deployment.ts` runs afterwards.
+
 ## 9a. Continuous integration
 
 `\.github/workflows/verify.yml` runs the commands declared in `.claude/verification.json` on every pull request into `dev` and `main`: types, the full node suite, browser proof, and the recorded AI eval suite. CI and local verification run the same commands deliberately — a green check that ran something different from what an engineer runs is worse than no check, because it is trusted.
 
-`.github/workflows/release.yml` builds the artifact once, pushes it to GHCR **by digest**, and attaches build provenance attestation.
+`.github/workflows/release.yml` builds the artifact once, pushes it to GHCR **by digest**, and attaches build provenance attestation. It has now run from `main` and produced the released artifact; the attestation verifies against this repository (SLSA v1 predicate, `release.yml@refs/heads/main`, source revision `4487e58`, GitHub-hosted runner).
 
 That was stated here in the present tense before it had ever succeeded — the only run at the time had failed on a lowercase registry name. It is now true and verified: run `31389073928` completed the `build` job successfully, dispatched on a branch *before* promotion. The workflow carries `workflow_dispatch` precisely so the build can be exercised without a promotion, which also means a packet claiming the build is unverifiable before promotion is wrong.
 
@@ -263,7 +279,7 @@ The recorded eval suite that CI *does* run exercises validation, grounding and f
 **Security residuals**
 
 6. Authentication carries no password policy, reset flow, or multi-factor option. Recorded in the threat model's residual risks.
-7. **Login cost is bounded per email address, not globally.** An attacker using many distinct addresses can still consume scrypt capacity, because `scryptSync` blocks Node's only thread. A work queue or upstream rate limit belongs with slice 5.
+7. **Login cost is bounded per address and globally, but the global bound couples availability.** Realised in Phase 12 after a flood of distinct addresses (which slip past the per-address throttle) starved authenticated reads: hashing now runs off the main thread and behind a global gate (8 concurrent, 32 queued) that sheds the rest as a retryable 503. Two accepted residuals replace the old one: (a) under sustained flood the gate sheds indiscriminately, so a legitimate login can be shed too — a rejected login is recoverable by retry, a starved service is not; (b) `login` can now return **503**, a new outcome in its public contract, identical for known and unknown emails so it is not an account oracle. A true per-source (network) rate limit upstream would let the gate be less blunt; it is deferred, not designed. Separately and pre-existing: the per-account lockout is a denial vector — five wrong passwords lock a known email for 15 minutes — accepted on the same loopback rationale.
 8. The `__Host-` cookie prefix is not set, so cookie injection from a sibling host is not closed. Not reachable on loopback; required before DEV or SANDBOX are exposed.
 9. **An injected instruction can steer the model's judgement within the contract.** Format subversion is refused by the schema and grounding checks, but "this is cosmetic, classify SEV-3 and close it" produces output that is schema-valid and fully grounded. No deterministic rule distinguishes a steered judgement from a considered one. Measured by the `injection-severity-steering` eval case; mitigated only by the assessment being advisory and clearly labelled as interpretation.
 
@@ -279,7 +295,7 @@ The recorded eval suite that CI *does* run exercises validation, grounding and f
 
 **Platform and structure**
 
-17. **Sandbox-prod has never run.** Its stack is defined and its configuration validates, but no release has been deployed to it — that transition is Gate #2.
+17. **Sandbox-prod has been deployed exactly once**, so most of its behaviour over time is still unknown: no upgrade-in-place and no second artifact. Restart and data restore are now evidenced — `docs/release/backup-and-restore.md` records a drill in which the environment was mutated, restored, and re-verified 4 of 4. **Artifact rollback remains unexercised**; restoring data to a point in time and returning to a previous release are different actions.
 18. **Design-pass evidence is not durably retained.** The before/after comparison that found two visual defects lives in `artifacts/`, which is gitignored — the findings are recorded in commit messages and packets, but a reviewer cannot reach the images. Design passes run locally, so nothing uploads them to CI artifact storage.
 19. **`scroll-padding-block-start` is set but untested.** An assertion for it passed with the property removed, so it was deleted rather than kept as a test that cannot fail. The reason is not that the page cannot scroll — it can, and review measured it — but that no scenario was found in which the property changes where a focused control lands. Partial occlusion passes WCAG 2.4.11 Minimum, so this is a nicety rather than the AA criterion.
 20. **The repository is public.** Nothing secret has ever been committed — full history was scanned — but the LOCAL seed passwords and test fixture secrets are now visible. They apply only to a loopback environment with synthetic data, and DEV and SANDBOX refuse to start without a secret supplied at runtime.
@@ -287,7 +303,11 @@ The recorded eval suite that CI *does* run exercises validation, grounding and f
 22. **Rollback is written but untested**, because there is no previous artifact to roll back to.
 23. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design.
 24. Browser proof runs on Chromium only. No browser support matrix is declared, so behavior in other engines is untested.
-25. The spine's static mount still reaches into each module's internal `ui/` directory, and `buildApp` is edited in four places per module. With five modules the repetition is real; a module registry is the first refactor of slice 5.
+25. The spine's static mount still reaches into each module's internal `ui/` directory, and `buildApp` is edited in four places per module. With five modules the repetition is real; a module registry is the next structural refactor.
+26. **The release artifact is `linux/amd64` only while the target host is `arm64`.** `release.yml` builds on a GitHub-hosted x86 runner with no platform matrix, so DEV and sandbox-prod both run it under emulation. The digest deployed is the digest built and attested, so release identity holds — but DEV validates the intended *bytes*, not the intended *execution environment*, and an architecture-specific defect would escape both. A multi-platform build is the fix.
+27. **The DEV session secret is not held in the secret backend.** `compose.dev.yaml` instructs the operator to resolve it with `rbw get foundation-lab-dev-session`; no such entry exists, and the running DEV value was carried forward from a previous container. SANDBOX no longer has this problem — `foundation-lab-sandbox-session` was created in the backend by the operator and the sandbox deployment resolved its secret from there — which is what makes DEV's gap concrete rather than theoretical. The reference-not-value discipline in §7 is satisfied for SANDBOX by practice and for DEV only by the file. No value has been printed, committed, or logged.
+28. **The verification accounts are not recorded anywhere.** `verify-deployment.ts` cannot pass its identity check without an account provisioned in the environment under test, and the accounts used for DEV and sandbox exist only in those environments' databases. Their passwords are in neither the repository nor the secret backend, so **neither environment can be re-verified from any recorded material** — the LIVE VERIFIED result is reproducible only by provisioning a new account. This is limitation 27 in a second place; independent review found it here after the first was disclosed.
+29. **`sandbox-prod` has `can_admins_bypass: true` and `prevent_self_review: false`**, and the approver is the repository owner. Neither was exercised — Gate #2 was approved normally, on a run the bot could not approve — but neither is prevented by configuration, so separation of duties at Gate #2 rests partly on conduct rather than entirely on enforcement.
 
 ### Provenance of this list
 

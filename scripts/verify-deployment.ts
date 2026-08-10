@@ -8,11 +8,13 @@
  * deployed" and LIVE VERIFIED, which the standard says are not the same claim.
  *
  * Usage:
- *   FL_EXPECT_DIGEST=... FL_EXPECT_REVISION=... node scripts/verify-deployment.ts <base-url>
+ *   FL_EXPECT_DIGEST=... FL_EXPECT_REVISION=... \
+ *   FL_VERIFY_EMAIL=... FL_VERIFY_PASSWORD=... node scripts/verify-deployment.ts <base-url>
  *
- * The expectations are optional. Without them this still checks the deployment answers and
- * enforces authentication; with them it also proves the running bytes are the authorized
- * ones, which is the check that matters after a promotion.
+ * All four are REQUIRED. The expectations were once optional, which meant the identity check
+ * could report PASS having compared nothing — a 4-of-4 result that proved only that sign-in
+ * worked. Proving the running bytes are the authorized ones is the entire point of running
+ * this after a promotion, so it fails closed instead.
  */
 
 const baseUrl = process.argv[2];
@@ -52,15 +54,28 @@ await check('session probe answers without authentication', async () => {
   return 'authenticated:false';
 });
 
-// The identity check needs a session, because /api/meta is protected. Supplying credentials
-// is optional; without them the identity check is reported as SKIPPED rather than passed —
-// a check that cannot run must never look like one that succeeded.
+// The identity check needs a session, because /api/meta is protected, and it needs the
+// expected identity, because otherwise it compares nothing. All four inputs are REQUIRED:
+// without them the check is reported as SKIPPED rather than passed — a check that cannot run
+// must never look like one that succeeded, and a check that runs while comparing nothing is
+// worse, because it produces a green result that reads as proof.
 const email = process.env.FL_VERIFY_EMAIL;
 const password = process.env.FL_VERIFY_PASSWORD;
 const expectedDigest = process.env.FL_EXPECT_DIGEST;
 const expectedRevision = process.env.FL_EXPECT_REVISION;
 
-if (email !== undefined && password !== undefined) {
+const missing = [
+  email === undefined ? 'FL_VERIFY_EMAIL' : undefined,
+  password === undefined ? 'FL_VERIFY_PASSWORD' : undefined,
+  // The expectations are what make this an IDENTITY check rather than a sign-in check.
+  // They were optional, and the check reported PASS without them having compared anything —
+  // so a 4-of-4 result could be produced while proving nothing about which artifact was
+  // running. Independent review found the declared LIVE VERIFIED command omitted them.
+  expectedDigest === undefined ? 'FL_EXPECT_DIGEST' : undefined,
+  expectedRevision === undefined ? 'FL_EXPECT_REVISION' : undefined,
+].filter((name) => name !== undefined);
+
+if (missing.length === 0) {
   await check('release identity matches what was deployed', async () => {
     const login = await fetch(`${baseUrl}/api/session`, {
       method: 'POST',
@@ -73,10 +88,10 @@ if (email !== undefined && password !== undefined) {
     const meta = await fetch(`${baseUrl}/api/meta`, { headers: { cookie, 'content-type': 'application/json' } });
     const { data } = await meta.json();
 
-    if (expectedDigest !== undefined && data.artifactDigest !== expectedDigest) {
+    if (data.artifactDigest !== expectedDigest) {
       throw new Error(`running artifact ${data.artifactDigest} is NOT the authorized ${expectedDigest}`);
     }
-    if (expectedRevision !== undefined && data.vcsRef !== expectedRevision) {
+    if (data.vcsRef !== expectedRevision) {
       throw new Error(`running revision ${data.vcsRef} is NOT the authorized ${expectedRevision}`);
     }
     return `${data.environment} ${data.serviceVersion} @ ${data.vcsRef}`;
@@ -85,7 +100,7 @@ if (email !== undefined && password !== undefined) {
   checks.push({
     name: 'release identity matches what was deployed',
     ok: false,
-    detail: 'SKIPPED — set FL_VERIFY_EMAIL and FL_VERIFY_PASSWORD. A skipped check is not a pass.',
+    detail: `SKIPPED — set ${missing.join(', ')}. A skipped check is not a pass.`,
   });
 }
 

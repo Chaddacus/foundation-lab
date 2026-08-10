@@ -74,7 +74,7 @@ export class CustomersService implements CustomersCapability {
    * an unknown account costs the same time as a wrong password. Response text alone does
    * not hide account existence if the timing gives it away.
    */
-  login(input: LoginInput): SessionGrant {
+  async login(input: LoginInput): Promise<SessionGrant> {
     const email = typeof input?.email === 'string' ? input.email.trim() : '';
     const password = typeof input?.password === 'string' ? input.password : '';
 
@@ -82,14 +82,15 @@ export class CustomersService implements CustomersCapability {
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
-    // Bound hashing work BEFORE any scrypt call. The per-user lockout below cannot help
-    // here: it lives on a user row, so an unknown address could never be throttled and
-    // could drive unlimited scrypt on the single Node thread.
+    // Bound hashing work BEFORE any scrypt call, ATOMICALLY. The per-user lockout below
+    // cannot help here: it lives on a user row, so an unknown address could never be
+    // throttled and could drive unlimited scrypt.
     //
-    // Throttling is keyed by address regardless of whether an account exists, so it reveals
-    // nothing about account existence — and it is checked before hashing precisely so that
-    // the expensive work is what gets bounded.
-    if (!this.#throttle.allow(email)) {
+    // tryAcquire checks-and-counts in one step with no await, so concurrent arrivals cannot
+    // all slip past a check before any of them counts — the race the async hash introduced.
+    // Keyed by address regardless of whether an account exists, so it reveals nothing about
+    // account existence.
+    if (!this.#throttle.tryAcquire(email)) {
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
@@ -97,8 +98,7 @@ export class CustomersService implements CustomersCapability {
     const row = this.#repository.findUserRowByEmail(email);
 
     if (row === null) {
-      verifyPassword(password, DUMMY_VERIFIER);
-      this.#throttle.record(email);
+      await this.#verify(password, DUMMY_VERIFIER);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
@@ -108,15 +108,20 @@ export class CustomersService implements CustomersCapability {
     const lockedUntil = row.locked_until === null ? null : new Date(row.locked_until);
     const isLocked = lockedUntil !== null && lockedUntil > now;
 
-    const passwordMatches = verifyPassword(password, row.password_verifier);
+    const passwordMatches = await this.#verify(password, row.password_verifier);
 
     if (isLocked || !passwordMatches) {
-      this.#throttle.record(email);
-      if (!isLocked) this.#recordFailure(row.id, row.failed_attempts, now);
+      if (!isLocked) this.#recordFailure(row.id, now);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
     this.#repository.clearFailedAttempts(row.id);
+
+    // The login succeeded, so return the throttle slot it reserved: a person signing in
+    // repeatedly with the correct password is not the threat, and holding the slot would
+    // throttle them. The reservation did its job — it bounded concurrent hashing for this
+    // address while the hash was in flight. Only failures stay counted.
+    this.#throttle.release(email);
 
     // Session fixation is structurally impossible here: ids are generated server-side and
     // a client-supplied one is never adopted, so every login already yields a fresh id.
@@ -215,22 +220,60 @@ export class CustomersService implements CustomersCapability {
   }
 
   /** Provision a user. Not exposed through any adapter, for the same reason as above. */
-  provisionUser(customerId: string, email: string, password: string): User {
+  async provisionUser(customerId: string, email: string, password: string): Promise<User> {
     const user: User = {
       id: this.#clock.newId(),
       email: email.trim(),
       customerId,
       createdAt: this.#clock.now().toISOString(),
     };
-    this.#repository.insertUser({ ...user, passwordVerifier: hashPassword(password) });
+    let verifier: string;
+    try {
+      verifier = await hashPassword(password);
+    } catch (error) {
+      // Same translation as #verify: a saturated gate is a retryable dependency condition,
+      // not an internal fault. Provisioning is not adapter-reachable today, but the scripts
+      // that call it should get a clean error rather than a 500-class untranslated throw.
+      if (error instanceof Error && error.name === 'HashGateSaturated') {
+        throw new AppError('dependency', 'The service is busy. Please try again in a moment.');
+      }
+      throw error;
+    }
+    this.#repository.insertUser({ ...user, passwordVerifier: verifier });
     return user;
   }
 
-  #recordFailure(userId: string, previousFailures: number, now: Date): void {
-    const failedAttempts = previousFailures + 1;
-    const lockedUntil = failedAttempts >= MAX_FAILED_ATTEMPTS
-      ? new Date(now.getTime() + LOCKOUT_MS).toISOString()
-      : null;
-    this.#repository.recordFailedAttempt(userId, failedAttempts, lockedUntil);
+  /**
+   * Hash comparison with load-shedding mapped to a retryable failure.
+   *
+   * A saturated hash gate means the service is shedding password work under flood, not that
+   * the password is wrong. Returning `unauthorized` would tell a legitimate user their
+   * credentials are bad; `dependency` (503) tells them to retry, and keeps a flood from
+   * being silently absorbed as a wall of auth failures.
+   */
+  async #verify(password: string, verifier: string): Promise<boolean> {
+    try {
+      return await verifyPassword(password, verifier);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'HashGateSaturated') {
+        throw new AppError('dependency', 'The service is busy. Please try signing in again in a moment.');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Count one failed attempt, ATOMICALLY.
+   *
+   * Was: read `failed_attempts` off the row, add one in JS, write the absolute value. Safe
+   * when login was synchronous; under the async hash, N concurrent failures all read the
+   * same stale count and all wrote `1`, so the lockout never tripped (measured in review:
+   * 30 concurrent wrong guesses left the counter at 1). The increment now happens inside a
+   * single SQL statement, so the database — not a stale JS read — owns the count, and the
+   * lock is set in the same statement the instant the count crosses the threshold.
+   */
+  #recordFailure(userId: string, now: Date): void {
+    const lockedUntilIfTripped = new Date(now.getTime() + LOCKOUT_MS).toISOString();
+    this.#repository.recordFailedAttempt(userId, MAX_FAILED_ATTEMPTS, lockedUntilIfTripped);
   }
 }

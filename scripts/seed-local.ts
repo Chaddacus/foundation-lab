@@ -37,7 +37,7 @@ const SEED = [
 
 for (const entry of SEED) {
   const customer = provisioning.provisionCustomer(entry.customer);
-  const user = provisioning.provisionUser(customer.id, entry.email, entry.password);
+  const user = await provisioning.provisionUser(customer.id, entry.email, entry.password);
 
   const actor = { id: user.id, customerId: customer.id };
   const project = app.modules.projects.capability.createProject(actor, {

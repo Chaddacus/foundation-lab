@@ -31,8 +31,8 @@ export function customersRoutes(customers: CustomersCapability, config: Config):
       public: true,
       audit: true,
       successStatus: 201,
-      handler: ({ body, setCookie }) => {
-        const grant = customers.login(body as LoginInput);
+      handler: async ({ body, setCookie }) => {
+        const grant = await customers.login(body as LoginInput);
         setCookie(buildSessionCookie(
           signSessionId(grant.sessionId, config.sessionSecret),
           grant.expiresAt,

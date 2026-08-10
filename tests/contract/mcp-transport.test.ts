@@ -43,7 +43,7 @@ let acmeProjectId: string;
 let globexProjectId: string;
 
 /** Seed two customers so cross-tenant isolation is observable over the transport. */
-function seed(): void {
+async function seed(): Promise<void> {
   const app = buildApp(loadConfig({
     FL_DATABASE_PATH: databasePath,
     FL_OTLP_ENDPOINT: '',
@@ -52,8 +52,8 @@ function seed(): void {
 
   for (const [customerName, email] of [['Acme', 'ana@acme.test'], ['Globex', 'gil@globex.test']]) {
     const customer = app.modules.customers.provisioning.provisionCustomer(customerName);
-    app.modules.customers.provisioning.provisionUser(customer.id, email, PASSWORD);
-    const actor = app.modules.customers.capability.login({ email, password: PASSWORD }).actor;
+    await app.modules.customers.provisioning.provisionUser(customer.id, email, PASSWORD);
+    const actor = (await app.modules.customers.capability.login({ email, password: PASSWORD })).actor;
     const project = app.modules.projects.capability.createProject(actor, { name: `${customerName} Project` });
     if (customerName === 'Acme') acmeProjectId = project.id; else globexProjectId = project.id;
   }
@@ -64,7 +64,7 @@ function seed(): void {
 before(async () => {
   directory = mkdtempSync(join(tmpdir(), 'foundation-lab-mcp-'));
   databasePath = join(directory, 'mcp.sqlite');
-  seed();
+  await seed();
 
   // The server runs as ana@acme.test for every call it will ever serve.
   client = new Client({ name: 'foundation-lab-test-client', version: '0.0.0' });
