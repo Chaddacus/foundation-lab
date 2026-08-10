@@ -288,6 +288,8 @@ The recorded eval suite that CI *does* run exercises validation, grounding and f
 23. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design.
 24. Browser proof runs on Chromium only. No browser support matrix is declared, so behavior in other engines is untested.
 25. The spine's static mount still reaches into each module's internal `ui/` directory, and `buildApp` is edited in four places per module. With five modules the repetition is real; a module registry is the first refactor of slice 5.
+26. **The release artifact is `linux/amd64` only while the target host is `arm64`.** `release.yml` builds on a GitHub-hosted x86 runner with no platform matrix, so DEV and sandbox-prod both run it under emulation. The digest deployed is the digest built and attested, so release identity holds — but DEV validates the intended *bytes*, not the intended *execution environment*, and an architecture-specific defect would escape both. A multi-platform build is the fix.
+27. **The DEV session secret is not held in the secret backend.** `compose.dev.yaml` instructs the operator to resolve it with `rbw get foundation-lab-dev-session`; no such entry exists. The reference-not-value discipline in §7 is currently satisfied by the file and not by the practice. No value has been printed, committed, or logged.
 
 ### Provenance of this list
 

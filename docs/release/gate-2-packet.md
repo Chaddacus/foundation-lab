@@ -23,13 +23,24 @@ It fired for the first time on run `31389073928` and correctly blocked, waiting 
 - **The build job's own output** names the digest and source revision.
 - **DEV validation:** the DEV environment runs a previously built artifact and reports its digest at `/api/meta`. Confirm the digest under approval has been exercised in DEV before approving it for sandbox.
 
+### DEV validation actually performed — 2026-08-10
+
+The artifact built by the first release run from `main` (`4487e58`) was deployed to DEV and verified, rather than approved on the strength of the build alone:
+
+- Artifact: `ghcr.io/chaddacus/foundation-lab@sha256:7cad7e5d0a4b9ef9743ca17740aeac193c584173fa3056f36e8a9f0ef32b3f60`
+- Provenance attestation verifies against the repository: SLSA v1 predicate, built by `release.yml@refs/heads/main`, source revision `4487e58`, GitHub-hosted runner.
+- `node scripts/verify-deployment.ts http://127.0.0.1:4320` — **4 of 4 pass**, including that the running deployment reports the exact expected digest and revision.
+- That last check was **falsified before being trusted**: re-run with a deliberately wrong digest, it fails and names both the running and the expected artifact. The check discriminates.
+
 ## What is genuinely still weak
 
-1. **Sandbox-prod has never run.** Its first deployment is also its first exposure; any environment-specific defect surfaces then.
-2. **Rollback is written but untested**, because no previous artifact has ever been deployed there to roll back to.
-3. **No backup exists or can exist** before the first deployment. From the second onward, the SQLite volume `foundation-lab-sandbox_sandbox-data` is what to snapshot, and that procedure does not yet exist.
-4. **No metrics are exported**, so post-deployment health rests on traces, logs and manual checks.
-5. The sandbox is production-*like*. It holds no real data, which is what makes exercising this gate safe at all.
+1. **The artifact is `linux/amd64` only, and the target host is `arm64`.** It was built on a GitHub-hosted x86 runner with no platform matrix, so both DEV and sandbox-prod run it under emulation on this machine. Release identity is intact — the digest deployed is the digest built and attested — but "DEV validates the artifact intended for production" holds for the *bytes*, not for the *execution environment*. A defect that only appears on one architecture would not be caught here, and DEV would not catch it either, because DEV is emulated too. Found while performing the DEV validation above; the fix is a multi-platform build, which is a change to `release.yml` and therefore a future promotion, not this one.
+2. **The DEV session secret is not in the secret backend.** `compose.dev.yaml` instructs the operator to supply it with `rbw get foundation-lab-dev-session`, and no such entry exists — `rbw list` returns no `foundation-lab` entry at all. The value in the running container was carried forward from the previous deployment rather than resolved from the backend. No secret value was printed, stored in the repository, or written to a log, but the reference-not-value discipline in SPEC §7 is currently satisfied by the *file* and not by the *practice*. Creating the entry is a human act on an unlocked personal backend.
+3. **Sandbox-prod has never run.** Its first deployment is also its first exposure; any environment-specific defect surfaces then.
+4. **Rollback is written but untested**, because no previous artifact has ever been deployed there to roll back to.
+5. **No backup exists or can exist** before the first deployment. From the second onward, the SQLite volume `foundation-lab-sandbox_sandbox-data` is what to snapshot, and that procedure does not yet exist.
+6. **No metrics are exported**, so post-deployment health rests on traces, logs and manual checks.
+7. The sandbox is production-*like*. It holds no real data, which is what makes exercising this gate safe at all.
 
 ## Deployment, after approval
 
