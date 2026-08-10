@@ -109,10 +109,12 @@ describe('the server serves its tools to a real client', () => {
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name).sort();
 
+    // Pinned explicitly rather than derived: this list IS the exposed surface, and a tool
+    // appearing without someone editing this assertion is the thing worth catching.
     assert.deepEqual(names, [
-      'create_project', 'create_release', 'get_customer', 'get_project', 'get_release',
-      'list_projects', 'list_releases_for_project', 'list_users', 'set_release_status',
-      'update_project',
+      'archive_project', 'create_project', 'create_release', 'get_customer', 'get_project',
+      'get_release', 'list_projects', 'list_releases_for_project', 'list_users',
+      'set_release_status', 'update_project',
     ]);
 
     for (const tool of tools) {
