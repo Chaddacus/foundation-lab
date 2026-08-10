@@ -236,7 +236,9 @@ This was briefly not enforceable — required-reviewer protection is unavailable
 
 `\.github/workflows/verify.yml` runs the commands declared in `.claude/verification.json` on every pull request into `dev` and `main`: types, the full node suite, browser proof, and the recorded AI eval suite. CI and local verification run the same commands deliberately — a green check that ran something different from what an engineer runs is worse than no check, because it is trusted.
 
-`\.github/workflows/release.yml` builds the artifact once, pushes it to GHCR **by digest**, and attaches build provenance attestation. It contains no deploy job: see the Gate #2 note above.
+`.github/workflows/release.yml` builds the artifact once, pushes it to GHCR **by digest**, and attaches build provenance attestation.
+
+That was stated here in the present tense before it had ever succeeded — the only run at the time had failed on a lowercase registry name. It is now true and verified: run `31389073928` completed the `build` job successfully, dispatched on a branch *before* promotion. The workflow carries `workflow_dispatch` precisely so the build can be exercised without a promotion, which also means a packet claiming the build is unverifiable before promotion is wrong.
 
 **Three checks cannot run in hosted CI**, and they are named rather than left to be discovered:
 
@@ -278,7 +280,9 @@ The recorded eval suite that CI *does* run exercises validation, grounding and f
 **Platform and structure**
 
 17. **Sandbox-prod has never run.** Its stack is defined and its configuration validates, but no release has been deployed to it — that transition is Gate #2.
-18. **The repository is public.** Nothing secret has ever been committed — full history was scanned — but the LOCAL seed passwords and test fixture secrets are now visible. They apply only to a loopback environment with synthetic data, and DEV and SANDBOX refuse to start without a secret supplied at runtime.
+18. **Design-pass evidence is not durably retained.** The before/after comparison that found two visual defects lives in `artifacts/`, which is gitignored — the findings are recorded in commit messages and packets, but a reviewer cannot reach the images. Design passes run locally, so nothing uploads them to CI artifact storage.
+19. **`scroll-padding-block-start` is set but untested.** An assertion for it passed with the property removed, because no fixture page is long enough to scroll; it was deleted rather than kept as a test that cannot fail. Partial occlusion passes WCAG 2.4.11 Minimum, so this is a nicety rather than the AA criterion.
+20. **The repository is public.** Nothing secret has ever been committed — full history was scanned — but the LOCAL seed passwords and test fixture secrets are now visible. They apply only to a loopback environment with synthetic data, and DEV and SANDBOX refuse to start without a secret supplied at runtime.
 19. **Live evals, Elastic correlation and deployment verification do not run in CI** and depend on a human running them locally. Their evidence is attached to gate packets rather than produced by an independent system.
 20. **Rollback is written but untested**, because there is no previous artifact to roll back to.
 21. Sessions live in the application database, so horizontal scaling would need a shared store. Single-instance by design.
