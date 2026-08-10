@@ -1,18 +1,22 @@
 # Release — build once, so the same artifact can be promoted.
 #
-# This workflow BUILDS ONLY. It does not deploy, and it deliberately contains no job that
-# looks like a deployment gate.
+# Two jobs with a human decision between them:
+#   build           produces ONE artifact and pushes it to GHCR by digest.
+#   authorize-deploy requires the `sandbox-prod` environment, whose required-reviewer rule IS
+#                   Human Gate #2. The job cannot start until a person approves that exact
+#                   run. GitHub enforces it; nothing in this repository or in Claude's
+#                   configuration can bypass it.
 #
-# Why: mechanical Gate #2 would be a GitHub Environment with a required reviewer, and that
-# protection rule is not available for private repositories on this account's plan. An
-# environment created without it exists but enforces NOTHING — a control that looks real and
-# is not, which is worse than an openly manual step. One was created during setup, verified
-# to have zero protection rules, and deleted for that reason.
+# The second job does NOT perform the deployment, and says so. sandbox-prod is a loopback-only
+# stack on the operator's machine and is unreachable from a hosted runner. Approving the job
+# IS the authorization; the deploy is then executed against the local environment with the
+# artifact digest this run produced.
 #
-# Gate #2 is therefore a documented human procedure (docs/release/gate-2-packet.md) performed
-# on the machine that hosts the sandbox environment — which a hosted runner cannot reach in
-# any case, since sandbox-prod is loopback-only. The gap is recorded in SPEC §10 rather than
-# papered over.
+# An earlier revision of this file had no gate at all, because required-reviewer protection is
+# unavailable on private repositories under a free plan. An environment created without that
+# rule exists but enforces NOTHING — a control that looks real and is not. Rather than ship
+# that, the job was removed until the repository became public and the rule could be verified
+# present.
 #
 # The artifact is identified by DIGEST throughout. A tag can be repointed at different bytes,
 # so a tag-based promotion would make "the artifact we approved" unverifiable.
@@ -97,4 +101,30 @@ jobs:
           echo "  docker compose -f compose.sandbox.yaml up -d"
           echo
           echo "LIVE VERIFIED is declared only after:"
+          echo "  node scripts/verify-deployment.ts http://127.0.0.1:4330"
+
+  authorize-deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # HUMAN GATE #2 — the environment's required-reviewer rule stops this job until a person
+    # approves this exact run and this exact artifact.
+    environment:
+      name: sandbox-prod
+    steps:
+      - name: Record the authorization and the operator procedure
+        run: |
+          echo "Gate #2 APPROVED for:"
+          echo "  ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}"
+          echo "  revision ${{ github.sha }}"
+          echo
+          echo "sandbox-prod is loopback-only on the operator machine and unreachable from a"
+          echo "hosted runner, so this job authorizes rather than deploys. On that machine:"
+          echo
+          echo "  FL_IMAGE=ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }} \\"
+          echo "  FL_VCS_REF=${{ github.sha }} \\"
+          echo "  FL_SERVICE_VERSION=${{ github.ref_name }}-${{ github.run_number }} \\"
+          echo "  FL_SESSION_SECRET=\"\$(rbw get foundation-lab-sandbox-session)\" \\"
+          echo "  docker compose -f compose.sandbox.yaml up -d"
+          echo
+          echo "LIVE VERIFIED is declared only after this passes:"
           echo "  node scripts/verify-deployment.ts http://127.0.0.1:4330"
