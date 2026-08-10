@@ -87,6 +87,21 @@ export const projectsTools: readonly McpTool[] = [
     },
     sideEffect: 'write',
   },
+  {
+    name: 'archive_project',
+    description:
+      'Archive a project. One way: an archived project cannot be edited and cannot be '
+      + 'restored. Archiving an already-archived project is refused.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Project id.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    // A write, and a consequential one — the description says plainly that it cannot be
+    // undone, because a client choosing to call it should know that before it does.
+    sideEffect: 'write',
+  },
 ];
 
 /**
@@ -115,6 +130,9 @@ export function dispatchProjectsTool(
       const { id, ...changes } = args;
       return projects.updateProject(actor, id as string, changes as unknown as UpdateProjectInput);
     }
+
+    case 'archive_project':
+      return projects.archiveProject(actor, args.id as string);
 
     default:
       throw AppError.validation(`Unknown tool "${toolName}".`);
