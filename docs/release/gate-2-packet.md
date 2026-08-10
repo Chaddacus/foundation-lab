@@ -3,6 +3,8 @@
 **Decision requested:** authorize one exact artifact digest to deploy to the sandbox production-like environment.
 **Requested by:** foundation-lab-bot (builder identity; not the approver)
 
+> **STATUS: APPROVED AND EXECUTED, 2026-08-10.** See the Outcome section at the end. **The risk list below is preserved exactly as the approver read it** and is therefore written in the tense of a decision not yet made.
+
 > **The digest is deliberately not filled in here.** Gate #2 binds to an exact artifact, and the artifact is produced by the release run this gate belongs to. A packet naming a digest written in advance would be approving bytes that did not exist when it was written. The `authorize-deploy` job names the digest in its own output; approve there.
 
 ## How this gate is enforced
@@ -29,7 +31,7 @@ The artifact built by the first release run from `main` (`4487e58`) was deployed
 
 - Artifact: `ghcr.io/chaddacus/foundation-lab@sha256:7cad7e5d0a4b9ef9743ca17740aeac193c584173fa3056f36e8a9f0ef32b3f60`
 - Provenance attestation verifies against the repository: SLSA v1 predicate, built by `release.yml@refs/heads/main`, source revision `4487e58`, GitHub-hosted runner.
-- `node scripts/verify-deployment.ts http://127.0.0.1:4320` — **4 of 4 pass**, including that the running deployment reports the exact expected digest and revision.
+- `verify-deployment.ts` against DEV — **4 of 4 pass**, including that the running deployment reports the exact expected digest. *(Corrected after review: this DEV deployment carried `service.version 0.6.0` and a truncated revision, so it matched on digest and short revision only. DEV was redeployed with the released identity afterwards and now reports `main-3 @ 4487e5879d…`.)*
 - That last check was **falsified before being trusted**: re-run with a deliberately wrong digest, it fails and names both the running and the expected artifact. The check discriminates.
 
 ## What is genuinely still weak
@@ -46,7 +48,18 @@ The artifact built by the first release run from `main` (`4487e58`) was deployed
 
 `authorize-deploy` authorizes rather than deploys: sandbox-prod is loopback-only on the operator machine and unreachable from a hosted runner. The job prints the exact command, which uses the approved digest and takes the session secret from the secret backend at launch — unlocking that backend is a human act and nothing in this repository attempts it.
 
-**LIVE VERIFIED is declared only after** `node scripts/verify-deployment.ts http://127.0.0.1:4330` passes, which checks that the running deployment reports the exact digest that was approved. Deploying is not verifying.
+**LIVE VERIFIED is declared only after** `verify-deployment.ts` passes against the environment **with `FL_EXPECT_DIGEST`, `FL_EXPECT_REVISION` and credentials supplied**. Those inputs are required: without them the identity check compares nothing and reports a green result proving only that sign-in worked. The script fails closed without them, and `authorize-deploy` prints the full invocation. Deploying is not verifying, and neither is a green line that had nothing to compare.
+
+## Outcome — 2026-08-10
+
+**Approved and executed.** Gate #2 authorized `sha256:7cad7e5d…` on run `31395109475`; the deployment ran locally against that digest and `verify-deployment.ts` passed 4 of 4. Sandbox-prod is **LIVE VERIFIED**.
+
+The full provenance is retained in `release-record-main-3.md`, which is the durable record — this packet is the basis of the decision, not the record of the release.
+
+Two things worth carrying into the next use of this gate:
+
+- The deployment could not proceed until `foundation-lab-sandbox-session` existed in the secret backend. That entry did not exist, which is risk 2 above blocking the thing it warned about. The operator created it; automation did not, and should not.
+- Provisioning a verification account is part of deploying a fresh environment. `verify-deployment.ts` refuses to call a skipped check a pass, so a new environment cannot be declared LIVE VERIFIED until an account exists to prove authenticated identity with. **That account's credential is not recorded anywhere** — see SPEC §10 item 28. The environment therefore cannot be re-verified without provisioning a new one.
 
 ---
 **Approval record:** _(the approval is the environment approval on the release run; this document is its basis)_

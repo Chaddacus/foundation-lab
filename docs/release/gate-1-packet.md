@@ -3,6 +3,8 @@
 **Decision requested:** authorize the head of PR #11 to merge from `dev` into `main`.
 **Requested:** 2026-08-10 · **Requested by:** foundation-lab-bot (builder identity; not the approver)
 
+> **STATUS: APPROVED AND EXECUTED, 2026-08-10.** `959fa58` merged to `main` as `4487e58`. **Everything below is preserved exactly as the approver read it** — a gate packet is the record of what a decision was made on, so its risk list is not updated to reflect what later became true. For current state see `SPEC.md`; for what the release actually did, see `release-record-main-3.md`.
+
 ## Which exact revision this binds to
 
 **This file deliberately does not hardcode the candidate SHA.** Two earlier versions did, and both went stale the moment they were committed: writing the SHA into the packet creates a new commit, which becomes the new head, which the packet then misnames. The second version's own opening line announced it was fixing exactly that defect while reintroducing it.

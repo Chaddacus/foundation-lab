@@ -145,18 +145,18 @@
     }
   ],
   "deployment": {
-    "$comment": "Run against a DEPLOYED environment, not a source tree. The base URL is the environment under test; these prove the deployment is the artifact that was authorized and that it works.",
+    "$comment": "Run against a DEPLOYED environment, not a source tree. All four FL_EXPECT_*/FL_VERIFY_* values are REQUIRED and the script fails closed without them: without the expectations the identity check reported PASS having compared nothing, which is a green result that proves only that sign-in worked. The credentials are supplied by the operator at run time and are never stored here.",
     "dev": [
       {
         "name": "artifact-identity",
         "$comment": "The live deployment must report the exact digest that was deployed. A mismatch means something other than the authorized artifact is running.",
-        "command": "node scripts/verify-deployment.ts http://127.0.0.1:4320"
+        "command": "FL_EXPECT_DIGEST=\"$FL_EXPECT_DIGEST\" FL_EXPECT_REVISION=\"$FL_EXPECT_REVISION\" FL_VERIFY_EMAIL=\"$FL_VERIFY_EMAIL\" FL_VERIFY_PASSWORD=\"$FL_VERIFY_PASSWORD\" node scripts/verify-deployment.ts http://127.0.0.1:4320"
       }
     ],
     "sandbox": [
       {
         "name": "artifact-identity",
-        "command": "node scripts/verify-deployment.ts http://127.0.0.1:4330"
+        "command": "FL_EXPECT_DIGEST=\"$FL_EXPECT_DIGEST\" FL_EXPECT_REVISION=\"$FL_EXPECT_REVISION\" FL_VERIFY_EMAIL=\"$FL_VERIFY_EMAIL\" FL_VERIFY_PASSWORD=\"$FL_VERIFY_PASSWORD\" node scripts/verify-deployment.ts http://127.0.0.1:4330"
       }
     ]
   }
