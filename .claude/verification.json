@@ -27,7 +27,7 @@
     {
       "name": "ai-golden-heartbeat",
       "ai_eval": true,
-      "$comment": "Recorded provider by default. The live heartbeat is exactly three calls, per the approved budget.",
+      "$comment": "Recorded provider by default. A live heartbeat is 3 cases and, because one retry is permitted for transport failures, at most 6 provider calls.",
       "command": "node evals/incident-triage/run.ts --fast"
     }
   ],

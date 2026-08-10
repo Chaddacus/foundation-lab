@@ -33,6 +33,9 @@ import { createReleasesModule, type ReleasesModule } from '../modules/releases/i
 import { createIncidentsModule, type IncidentsModule } from '../modules/incidents/index.ts';
 import { createTriageModule, type TriageModule } from '../modules/triage/index.ts';
 import { ClaudeCliGateway, type AiGateway } from './ai-gateway.ts';
+import { ATTR_APP_MODULE } from './telemetry.ts';
+import { RateLimiter, TRIAGE_WINDOW_MS } from './rate-limit.ts';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
 
 const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -55,10 +58,15 @@ export interface Application {
 /**
  * Capability names the triage grounding check validates against.
  *
- * Derived from what the application actually has, so a model naming a module that does not
- * exist is rejected rather than believed.
+ * DERIVED from the composed modules, not hand-written. A hardcoded list under a comment
+ * claiming derivation is worse than either: adding a sixth module would silently cause
+ * correct assessments naming it to be rejected as a fabrication.
+ *
+ * `triage` itself is excluded — it is the analyser, never the analysed capability.
  */
-const MODULE_NAMES: readonly string[] = ['customers', 'projects', 'releases', 'incidents'];
+export function moduleNamesFor(modules: Record<string, unknown>): readonly string[] {
+  return Object.keys(modules).filter((name) => name !== 'triage');
+}
 
 /**
  * Build the application.
@@ -76,10 +84,54 @@ export function buildApp(config: Config = loadConfig(), gateway: AiGateway = new
   // Releases depends on the Projects CAPABILITY, not its storage — the tenant rule for
   // projects has exactly one owner.
   const releases = createReleasesModule(db, projects.capability);
-  const incidents = createIncidentsModule(db);
+  const incidents = createIncidentsModule(db, projects.capability);
+  const logger = createLogger(config);
+
+  // One source of truth for what capabilities exist. The grounding list the AI is validated
+  // against is derived from this, so the two cannot drift.
+  const capabilityModules = { customers, projects, releases, incidents };
+
   // Triage depends on the Incidents CAPABILITY and on the gateway INTERFACE, so it holds no
-  // provider detail and no second copy of the incident tenant rule.
-  const triage = createTriageModule(incidents.capability, gateway, () => MODULE_NAMES);
+  // provider detail and no second copy of the incident tenant rule. The observer is wired
+  // HERE because telemetry is spine wiring — the module declares what happened, the spine
+  // decides where that goes.
+  const triage = createTriageModule(
+    incidents.capability,
+    gateway,
+    () => moduleNamesFor(capabilityModules),
+    {
+      record: (event) => {
+        const span = trace.getActiveSpan();
+      span?.setAttribute(ATTR_APP_MODULE, 'triage');
+      span?.setAttribute('gen_ai.system', event.provider);
+      span?.setAttribute('gen_ai.request.model', event.model);
+      span?.setAttribute('app.ai.prompt_version', event.promptVersion);
+      span?.setAttribute('app.ai.outcome', event.outcome);
+      span?.setAttribute('app.ai.attempts', event.attempts);
+      span?.setAttribute('app.ai.latency_ms', event.latencyMs);
+
+      if (event.outcome === 'unavailable') {
+        // A rejected assessment was previously indistinguishable from an accepted one in
+        // telemetry, because the HTTP request itself succeeded.
+        span?.setAttribute('error.type', event.reason ?? 'unknown');
+        span?.setStatus({ code: SpanStatusCode.ERROR, message: event.reason });
+      }
+
+      logger.info(`triage ${event.outcome}`, {
+        module: 'triage',
+        operation: 'assessIncident',
+        provider: event.provider,
+        ai_model: event.model,
+        prompt_version: event.promptVersion,
+        outcome: event.outcome,
+        ...(event.reason === undefined ? {} : { error_type: event.reason }),
+        latency_ms: event.latencyMs,
+        attempts: event.attempts,
+      });
+      },
+    },
+    new RateLimiter(config.triageMaxCalls, TRIAGE_WINDOW_MS),
+  );
 
   applyMigrations(db, [
     customers.migration, projects.migration, releases.migration, incidents.migration,
@@ -104,7 +156,6 @@ export function buildApp(config: Config = loadConfig(), gateway: AiGateway = new
     { prefix: '/', root: join(SRC_ROOT, 'web') },
   ];
 
-  const logger = createLogger(config);
   const listener = createRequestListener(
     routes,
     config,
@@ -119,7 +170,7 @@ export function buildApp(config: Config = loadConfig(), gateway: AiGateway = new
     db,
     routes,
     logger,
-    modules: { customers, projects, releases, incidents, triage },
+    modules: { ...capabilityModules, triage },
     listener,
     close: () => db.close(),
   };

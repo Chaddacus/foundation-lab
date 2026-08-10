@@ -15,6 +15,9 @@ import { loadConfig } from '../../src/spine/config.ts';
 import type { AiGateway, AiRequest, AiResult } from '../../src/spine/ai-gateway.ts';
 import type { Actor } from '../../src/spine/actor.ts';
 import type { AppError } from '../../src/spine/errors.ts';
+import { RateLimiter, TRIAGE_MAX_CALLS } from '../../src/spine/rate-limit.ts';
+import { TriageService, type TriageObserver } from '../../src/modules/triage/service.ts';
+import { BudgetedGateway, MAX_LIVE_CALLS } from '../../evals/incident-triage/run.ts';
 
 const PASSWORD = 'triage-test-password';
 
@@ -174,5 +177,115 @@ describe('prompt construction', () => {
     assert.equal(outcome.meta.promptVersion, 'triage-prompt-v2');
     // Data minimization: an incident report is user content and must not travel in metadata.
     assert.ok(!JSON.stringify(outcome.meta).includes('500'));
+  });
+});
+
+describe('metered capacity is bounded at runtime', () => {
+  const manyOk = () => Array.from({ length: 20 }, () => ({ ok: true as const, text: ASSESSMENT, latencyMs: 1 }));
+
+  test('an actor cannot spend model capacity in a loop', async () => {
+    // Every call costs metered subscription capacity — this application's defining
+    // constraint — and the route previously had no bound of any kind.
+    gateway.script(...manyOk());
+
+    for (let attempt = 0; attempt < TRIAGE_MAX_CALLS; attempt += 1) {
+      const outcome = await app.modules.triage.capability.assessIncident(ana, incidentId);
+      assert.equal(outcome.status, 'assessed', `call ${attempt} was refused too early`);
+    }
+
+    await assert.rejects(
+      () => app.modules.triage.capability.assessIncident(ana, incidentId),
+      (error: AppError) => error.kind === 'conflict',
+      'an unlimited number of analyses was allowed',
+    );
+  });
+
+  test('a refused request costs no provider call', async () => {
+    gateway.script(...manyOk());
+    for (let attempt = 0; attempt < TRIAGE_MAX_CALLS; attempt += 1) {
+      await app.modules.triage.capability.assessIncident(ana, incidentId);
+    }
+    const callsBefore = gateway.calls;
+
+    await assert.rejects(() => app.modules.triage.capability.assessIncident(ana, incidentId));
+    assert.equal(gateway.calls, callsBefore, 'a throttled request still reached the provider');
+  });
+
+  test('an exhausted actor does not consume another actor\'s budget', async () => {
+    const shared = new RateLimiter(TRIAGE_MAX_CALLS, 60_000);
+    const service = new TriageService(app.modules.incidents.capability, gateway, () => ['projects'], undefined, shared);
+    gateway.script(...manyOk());
+
+    for (let attempt = 0; attempt < TRIAGE_MAX_CALLS; attempt += 1) {
+      await service.assessIncident(ana, incidentId);
+    }
+    await assert.rejects(() => service.assessIncident(ana, incidentId));
+
+    // Gil cannot see Ana's incident, so what matters is that he fails on AUTHORIZATION
+    // rather than on her exhausted quota — the limit is per actor, not global.
+    await assert.rejects(
+      () => service.assessIncident(gil, incidentId),
+      (error: AppError) => error.kind === 'not_found',
+    );
+  });
+
+  test('the eval budget ceiling actually aborts rather than counting past it', async () => {
+    // Deleting this ceiling previously left every test green.
+    let calls = 0;
+    const budgeted = new BudgetedGateway({
+      provider: 'stub',
+      complete: async () => { calls += 1; return { ok: true as const, text: '{}', latencyMs: 0 }; },
+    });
+
+    for (let call = 0; call < MAX_LIVE_CALLS; call += 1) {
+      await budgeted.complete({ prompt: 'x', model: 'm', timeoutMs: 1 });
+    }
+    assert.equal(budgeted.calls, MAX_LIVE_CALLS);
+
+    await assert.rejects(
+      () => budgeted.complete({ prompt: 'x', model: 'm', timeoutMs: 1 }),
+      /budget exhausted/i,
+    );
+    assert.equal(calls, MAX_LIVE_CALLS, 'the wrapped gateway was called past the ceiling');
+  });
+});
+
+describe('observability', () => {
+  function observed() {
+    const events: Record<string, unknown>[] = [];
+    const observer: TriageObserver = { record: (event) => { events.push({ ...event }); } };
+    return { events, service: new TriageService(app.modules.incidents.capability, gateway, () => ['projects'], observer) };
+  }
+
+  test('records provider, model, prompt version and outcome for a success', async () => {
+    const { events, service } = observed();
+    gateway.script({ ok: true, text: ASSESSMENT, latencyMs: 42 });
+    await service.assessIncident(ana, incidentId);
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].outcome, 'assessed');
+    assert.equal(events[0].promptVersion, 'triage-prompt-v2');
+    assert.equal(events[0].attempts, 1);
+  });
+
+  test('records the reason for a rejected assessment, which telemetry could not otherwise see', async () => {
+    // An unavailable outcome is a 200 at the HTTP layer, so without this it is
+    // indistinguishable from an accepted one.
+    const { events, service } = observed();
+    gateway.script({ ok: false, reason: 'timeout', latencyMs: 5 }, { ok: false, reason: 'timeout', latencyMs: 5 });
+    await service.assessIncident(ana, incidentId);
+
+    assert.equal(events[0].outcome, 'unavailable');
+    assert.equal(events[0].reason, 'provider_timeout');
+  });
+
+  test('records NO incident content — reports are user data', async () => {
+    const { events, service } = observed();
+    gateway.script({ ok: true, text: ASSESSMENT, latencyMs: 1 });
+    await service.assessIncident(ana, incidentId);
+
+    const serialized = JSON.stringify(events);
+    assert.ok(!serialized.includes('Every create returns 500'), 'the report reached telemetry');
+    assert.ok(!serialized.includes('Project creation is failing'), 'the response reached telemetry');
   });
 });

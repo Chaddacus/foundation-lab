@@ -23,7 +23,7 @@ import type {
   User,
 } from './contract.ts';
 import { DUMMY_VERIFIER, hashPassword, verifyPassword } from './passwords.ts';
-import { LoginThrottle } from './throttle.ts';
+import { RateLimiter, THROTTLE_MAX_ATTEMPTS, THROTTLE_WINDOW_MS } from '../../spine/rate-limit.ts';
 import type { CustomersRepository } from './repository.ts';
 
 /** Injected so tests can pin time and identifiers and assert exact stored values. */
@@ -55,12 +55,12 @@ const LOGIN_FAILED = 'That email and password combination is not correct.';
 export class CustomersService implements CustomersCapability {
   readonly #repository: CustomersRepository;
   readonly #clock: AuthClock;
-  readonly #throttle: LoginThrottle;
+  readonly #throttle: RateLimiter;
 
   constructor(
     repository: CustomersRepository,
     clock: AuthClock = systemAuthClock,
-    throttle: LoginThrottle = new LoginThrottle(),
+    throttle: RateLimiter = new RateLimiter(THROTTLE_MAX_ATTEMPTS, THROTTLE_WINDOW_MS),
   ) {
     this.#repository = repository;
     this.#clock = clock;
@@ -98,7 +98,7 @@ export class CustomersService implements CustomersCapability {
 
     if (row === null) {
       verifyPassword(password, DUMMY_VERIFIER);
-      this.#throttle.recordFailure(email);
+      this.#throttle.record(email);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }
 
@@ -111,7 +111,7 @@ export class CustomersService implements CustomersCapability {
     const passwordMatches = verifyPassword(password, row.password_verifier);
 
     if (isLocked || !passwordMatches) {
-      this.#throttle.recordFailure(email);
+      this.#throttle.record(email);
       if (!isLocked) this.#recordFailure(row.id, row.failed_attempts, now);
       throw new AppError('unauthorized', LOGIN_FAILED);
     }

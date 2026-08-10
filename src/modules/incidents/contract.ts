@@ -32,7 +32,10 @@ export interface Incident {
   readonly status: IncidentStatus;
   /** Elastic Case identifier, when one exists. Null means "no Case yet", not "unknown". */
   readonly caseRef: string | null;
-  /** Optional project this incident concerns, for correlation with releases. */
+  /**
+   * Optional project this incident concerns, validated through the Projects capability so a
+   * caller cannot attach another tenant's project id.
+   */
   readonly projectId: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;

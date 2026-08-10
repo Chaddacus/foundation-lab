@@ -14,13 +14,14 @@ SPEC §12.9/§12.10 (foundation standard: `ai-engineering.md`). **If an AI capab
 
 | Property | Threshold | Result |
 |---|---|---|
-| Cases passing | 100% | 19/19 recorded, 6/6 live |
+| Cases passing | 100% | 20/20 recorded, 6/6 live |
 | Structured-output validity | 100% of malformed inputs refused | met |
-| Injection resistance | 100% — no injected instruction changes the output contract | met |
+| Injection resistance (output contract) | 100% — no injected instruction changes the contract, cites unsupplied evidence, or names a nonexistent capability | met |
+| Injection resistance (judgement) | **not guaranteed** — measured, not asserted | residual, SPEC §10.20 |
 | Grounding | 100% — zero fabricated evidence refs or module names accepted | met |
 | Fallback correctness | 100% — every provider failure yields `unavailable` with the right reason | met |
-| Live provider calls per run | ≤ 40 (hard stop, enforced in code) | 6 |
-| Latency | p95 ≤ 30 s | 16.8–22.8 s measured |
+| Live provider calls per run | ≤ 40 (hard stop, enforced in code AND proven by test) | 6 |
+| Latency | p95 ≤ 30 s | 16.8–28.3 s measured |
 
 ## Case categories
 
@@ -30,7 +31,7 @@ SPEC §12.9/§12.10 (foundation standard: `ai-engineering.md`). **If an AI capab
 | Difficult / edge | 2 | deterministic | ambiguity must yield `unknown`, not a confident wrong module |
 | Known regressions | 0 | — | **N/A deliberately:** no production escape has occurred yet. One case is added per escape, per the standard. |
 | Malformed / ambiguous input | 3 | deterministic | |
-| Prompt-injection / adversarial | 2 | deterministic | |
+| Prompt-injection / adversarial | 3 | deterministic | includes a judgement-steering case, which measures a residual no rule can close |
 | Tool / permission boundary | 0 | — | **N/A deliberately:** the capability has no tools. Its authority boundary is instead covered by `tests/integration/authorization.test.ts`, which proves triage cannot reach another tenant's incident. |
 | Grounding / citation behavior | 2 | deterministic | fabricated evidence ids and invented capability names |
 | Structured-output correctness | 6 | schema | includes the code-fence case, which reflects real measured model behavior |
@@ -44,7 +45,13 @@ SPEC §12.9/§12.10 (foundation standard: `ai-engineering.md`). **If an AI capab
 ## Recorded vs live
 
 - **Recorded (default).** Substitutes only the PROVIDER. Validation, grounding checks, and fallback all run for real. Spends nothing, so it runs on every `node --test`.
-- **Live.** Runs only the cases that test the model's own judgement. Cases whose recorded response is a fabricated bad output — a prose wrapper, a missing field, a timeout — are excluded, because a real provider cannot be made to emit them on demand and running them live would convert real coverage into unearned passes.
+- **Live.** Runs only the 6 cases that test the model's own judgement. Cases whose recorded response is a fabricated bad output — a prose wrapper, a missing field, a timeout — are excluded, because a real provider cannot be made to emit them on demand and running them live would convert real coverage into unearned passes.
+
+## Fixtures are bound to the behavior under test
+
+A recorded provider ignores the prompt, so a recorded run cannot observe a prompt or model change — the two axes SPEC §7a calls behavioral software changes. Verified by mutation: sabotaging the prompt (deleting the grounding instruction, inverting severity guidance) previously left all tests and the whole suite green.
+
+Fixtures are now bound to the model, the prompt version, and a **hash of the composed prompt text**. Any of the three differing stops the run with an instruction to re-record live. The hash matters because a version string is a promise a human has to keep, and an edit that skips the bump was otherwise invisible.
 
 ## What the live runs actually found
 
@@ -52,6 +59,8 @@ Recorded runs alone would have shipped two defects:
 
 1. **Fence-stripping lived in the gateway**, which the suite substitutes — so the suite could never exercise it. Moved into the capability's validation path.
 2. **The hypothesis bound rejected correct assessments.** The model returned 4, then 7, against a stated limit. Truncation replaced rejection for that field only.
+
+A later independent review found a fourth, in the suite rather than the system: `injection-fake-schema` was marked live-eligible with an expectation of "assessed or unavailable" — the only two statuses that exist — so it passed by construction while counting toward the live pass rate. It is now recorded-only.
 
 A third finding was a defect in the suite, not the system: the injection case asserted the injected string was ABSENT from the summary, failing a model that had correctly resisted the injection and named the attempt. The assertion now checks that the assessment addresses the real incident and cites the real evidence.
 

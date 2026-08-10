@@ -22,6 +22,20 @@ import { loadConfig } from '../../src/spine/config.ts';
 export const DATABASE = 'test-results/e2e.sqlite';
 export const SESSION_SECRET = 'e2e-session-secret';
 
+/**
+ * A gateway that fails the test if anything calls a provider.
+ *
+ * The capability contract claims no automated test spends subscription capacity. That was
+ * true only because authorization refused first — a property, not a structure. This makes
+ * it structural: a regression that let a call through fails loudly instead of billing.
+ */
+const NEVER_CALLED = {
+  provider: 'never-called',
+  complete: async (): Promise<never> => {
+    throw new Error('a test reached a real AI provider — tests must never spend subscription capacity');
+  },
+};
+
 export const ACME = { email: 'ana@acme.test', password: 'e2e-acme-password', customer: 'Acme Industries' };
 export const GLOBEX = { email: 'gil@globex.test', password: 'e2e-globex-password', customer: 'Globex Corporation' };
 
@@ -35,7 +49,7 @@ export function seedFixture(): void {
     FL_DATABASE_PATH: DATABASE,
     FL_OTLP_ENDPOINT: '',
     FL_SESSION_SECRET: SESSION_SECRET,
-  }));
+  }), NEVER_CALLED);
 
   for (const account of [ACME, GLOBEX]) {
     const customer = app.modules.customers.provisioning.provisionCustomer(account.customer);

@@ -20,6 +20,7 @@ import type {
   IncidentsCapability,
   UpdateIncidentInput,
 } from './contract.ts';
+import type { ProjectsCapability } from '../projects/contract.ts';
 import { normalizeCreate, normalizeUpdate } from './domain.ts';
 import type { IncidentsRepository } from './repository.ts';
 
@@ -35,16 +36,31 @@ export const systemClock: ServiceClock = {
 
 export class IncidentsService implements IncidentsCapability {
   readonly #repository: IncidentsRepository;
+  readonly #projects: ProjectsCapability;
   readonly #clock: ServiceClock;
 
-  constructor(repository: IncidentsRepository, clock: ServiceClock = systemClock) {
+  constructor(
+    repository: IncidentsRepository,
+    projects: ProjectsCapability,
+    clock: ServiceClock = systemClock,
+  ) {
     this.#repository = repository;
+    this.#projects = projects;
     this.#clock = clock;
   }
 
   createIncident(actor: Actor, input: CreateIncidentInput): Incident {
     requireTenant(actor);
     const normalized = normalizeCreate(input);
+
+    // Validated through the Projects CAPABILITY, not by reading its table — the same rule
+    // Releases follows, so project ownership keeps exactly one owner. An unreachable project
+    // raises not_found before anything is written, so an incident cannot reference another
+    // tenant's project.
+    if (normalized.projectId !== null) {
+      this.#projects.getProject(actor, normalized.projectId);
+    }
+
     const timestamp = this.#clock.now();
 
     const incident: Incident = {

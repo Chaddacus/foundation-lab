@@ -56,11 +56,25 @@ function authed(cookie: string, init: RequestInit = {}): RequestInit {
   };
 }
 
+/**
+ * A gateway that fails the test if anything calls a provider.
+ *
+ * The capability contract claims no automated test spends subscription capacity. That was
+ * true only because authorization refused first — a property, not a structure. This makes
+ * it structural: a regression that let a call through fails loudly instead of billing.
+ */
+const NEVER_CALLED = {
+  provider: 'never-called',
+  complete: async (): Promise<never> => {
+    throw new Error('a test reached a real AI provider — tests must never spend subscription capacity');
+  },
+};
+
 const PASSWORD = 'correct-horse-battery-staple';
 let cookie: string;
 
 before(async () => {
-  app = buildApp(testConfig());
+  app = buildApp(testConfig(), NEVER_CALLED);
   server = createServer(app.listener);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

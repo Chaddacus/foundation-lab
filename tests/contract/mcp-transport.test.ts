@@ -19,6 +19,20 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { buildApp } from '../../src/spine/app.ts';
 import { loadConfig } from '../../src/spine/config.ts';
 
+/**
+ * A gateway that fails the test if anything calls a provider.
+ *
+ * The capability contract claims no automated test spends subscription capacity. That was
+ * true only because authorization refused first — a property, not a structure. This makes
+ * it structural: a regression that let a call through fails loudly instead of billing.
+ */
+const NEVER_CALLED = {
+  provider: 'never-called',
+  complete: async (): Promise<never> => {
+    throw new Error('a test reached a real AI provider — tests must never spend subscription capacity');
+  },
+};
+
 const PASSWORD = 'mcp-test-password';
 const SESSION_SECRET = 'mcp-test-secret';
 
@@ -34,7 +48,7 @@ function seed(): void {
     FL_DATABASE_PATH: databasePath,
     FL_OTLP_ENDPOINT: '',
     FL_SESSION_SECRET: SESSION_SECRET,
-  }));
+  }), NEVER_CALLED);
 
   for (const [customerName, email] of [['Acme', 'ana@acme.test'], ['Globex', 'gil@globex.test']]) {
     const customer = app.modules.customers.provisioning.provisionCustomer(customerName);

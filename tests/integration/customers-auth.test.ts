@@ -19,11 +19,11 @@ import {
   type AuthClock,
 } from '../../src/modules/customers/service.ts';
 import {
-  LoginThrottle,
+  RateLimiter,
   THROTTLE_MAX_ATTEMPTS,
   THROTTLE_WINDOW_MS,
-  type ThrottleClock,
-} from '../../src/modules/customers/throttle.ts';
+  type RateLimitClock,
+} from '../../src/spine/rate-limit.ts';
 import type { AppError } from '../../src/spine/errors.ts';
 
 const PASSWORD = 'correct-horse-battery-staple';
@@ -41,7 +41,7 @@ function testClock(): AuthClock & { advance: (ms: number) => void } {
 }
 
 /** Separate clock for the throttle, whose window is measured in milliseconds since epoch. */
-function throttleTestClock(): ThrottleClock & { advance: (ms: number) => void } {
+function throttleTestClock(): RateLimitClock & { advance: (ms: number) => void } {
   let current = 1_000_000;
   return { now: () => current, advance: (ms: number) => { current += ms; } };
 }
@@ -53,7 +53,7 @@ let service: CustomersService;
 let customerId: string;
 
 /** Build a service sharing the seeded database, with an injectable throttle. */
-function buildService(throttle: LoginThrottle): CustomersService {
+function buildService(throttle: RateLimiter): CustomersService {
   return new CustomersService(repository, clock, throttle);
 }
 
@@ -127,11 +127,11 @@ describe('login consults the throttle', () => {
   // the DoS bound existed as a class nobody used.
 
   test('a throttled address is refused even with the correct password', () => {
-    const throttle = new LoginThrottle(throttleClock);
+    const throttle = new RateLimiter(THROTTLE_MAX_ATTEMPTS, THROTTLE_WINDOW_MS, throttleClock);
     const service = buildService(throttle);
 
     for (let attempt = 0; attempt < THROTTLE_MAX_ATTEMPTS; attempt += 1) {
-      throttle.recordFailure('ana@acme.test');
+      throttle.record('ana@acme.test');
     }
 
     // The correct password would otherwise succeed, so refusal can only come from the
@@ -143,11 +143,11 @@ describe('login consults the throttle', () => {
   });
 
   test('the same address succeeds once the window reopens', () => {
-    const throttle = new LoginThrottle(throttleClock);
+    const throttle = new RateLimiter(THROTTLE_MAX_ATTEMPTS, THROTTLE_WINDOW_MS, throttleClock);
     const service = buildService(throttle);
 
     for (let attempt = 0; attempt < THROTTLE_MAX_ATTEMPTS; attempt += 1) {
-      throttle.recordFailure('ana@acme.test');
+      throttle.record('ana@acme.test');
     }
     throttleClock.advance(THROTTLE_WINDOW_MS + 1);
 
@@ -155,7 +155,7 @@ describe('login consults the throttle', () => {
   });
 
   test('failed logins feed the throttle, including for addresses with no account', () => {
-    const throttle = new LoginThrottle(throttleClock);
+    const throttle = new RateLimiter(THROTTLE_MAX_ATTEMPTS, THROTTLE_WINDOW_MS, throttleClock);
     const service = buildService(throttle);
 
     for (let attempt = 0; attempt < THROTTLE_MAX_ATTEMPTS; attempt += 1) {

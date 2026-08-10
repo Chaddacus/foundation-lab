@@ -17,6 +17,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { AppError } from './errors.ts';
+import { TRIAGE_MAX_CALLS } from './rate-limit.ts';
 
 /** Deployment environments this application recognises. Maps to `deployment.environment.name`. */
 export type Environment = 'LOCAL' | 'DEV' | 'SANDBOX';
@@ -33,6 +34,14 @@ export interface Config {
   readonly artifactDigest: string;
   /** OTLP/HTTP collector base endpoint. Empty string disables the exporter. */
   readonly otlpEndpoint: string;
+  /**
+   * Real AI provider calls allowed per actor per minute.
+   *
+   * Configurable because the right bound differs by deployment, and because the eval
+   * harness legitimately needs a higher one — it is a harness, not a user, and throttling it
+   * would make the suite silently skip cases rather than evaluate them.
+   */
+  readonly triageMaxCalls: number;
   /**
    * HMAC key for session cookies. RESTRICTED — never log it, never return it, never place
    * it in telemetry or an error message.
@@ -67,6 +76,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     vcsRef: env.FL_VCS_REF ?? 'unknown',
     artifactDigest: env.FL_ARTIFACT_DIGEST ?? 'unbuilt',
     otlpEndpoint: env.FL_OTLP_ENDPOINT ?? 'http://127.0.0.1:4318',
+    triageMaxCalls: requirePositiveInteger(env.FL_TRIAGE_MAX_CALLS, TRIAGE_MAX_CALLS, 'FL_TRIAGE_MAX_CALLS'),
     sessionSecret: requireSessionSecret(env.FL_SESSION_SECRET, environment),
   });
 }
@@ -97,6 +107,15 @@ function requireSessionSecret(value: string | undefined, environment: Environmen
     `Configuration FL_SESSION_SECRET is required in ${environment}. ` +
     'Supply it at runtime from the configured secret backend.',
   );
+}
+
+function requirePositiveInteger(value: string | undefined, fallback: number, name: string): number {
+  if (value === undefined || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw AppError.validation(`Configuration ${name} must be a positive integer. Received "${value}".`);
+  }
+  return parsed;
 }
 
 function requireEnum<T extends string>(value: string, allowed: readonly T[], name: string): T {

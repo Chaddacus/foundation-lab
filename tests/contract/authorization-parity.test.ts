@@ -18,6 +18,20 @@ import type { Actor } from '../../src/spine/actor.ts';
 import type { AppError } from '../../src/spine/errors.ts';
 import type { Route } from '../../src/spine/http.ts';
 
+/**
+ * A gateway that fails the test if anything calls a provider.
+ *
+ * The capability contract claims no automated test spends subscription capacity. That was
+ * true only because authorization refused first — a property, not a structure. This makes
+ * it structural: a regression that let a call through fails loudly instead of billing.
+ */
+const NEVER_CALLED = {
+  provider: 'never-called',
+  complete: async (): Promise<never> => {
+    throw new Error('a test reached a real AI provider — tests must never spend subscription capacity');
+  },
+};
+
 const PASSWORD = 'correct-horse-battery-staple';
 
 let app: Application;
@@ -31,7 +45,7 @@ beforeEach(() => {
     FL_DATABASE_PATH: ':memory:',
     FL_OTLP_ENDPOINT: '',
     FL_SESSION_SECRET: 'test-secret-not-a-real-key',
-  }));
+  }), NEVER_CALLED);
 
   const provisioning = app.modules.customers.provisioning;
   const acme = provisioning.provisionCustomer('Acme');

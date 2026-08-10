@@ -23,9 +23,10 @@
 import { buildApp } from '../../src/spine/app.ts';
 import { loadConfig } from '../../src/spine/config.ts';
 import { ClaudeCliGateway, type AiGateway, type AiRequest, type AiResult } from '../../src/spine/ai-gateway.ts';
-import { PROMPT_VERSION } from '../../src/modules/triage/prompt.ts';
+import { createHash } from 'node:crypto';
+import { PROMPT_VERSION, composeTriagePrompt } from '../../src/modules/triage/prompt.ts';
 import { TRIAGE_MODEL } from '../../src/modules/triage/service.ts';
-import { CASES, DATASET_VERSION, type EvalCase } from './cases.ts';
+import { CASES, DATASET_VERSION, RECORDED_AGAINST, type EvalCase } from './cases.ts';
 
 export const GRADER_VERSION = 'triage-grader-v1';
 
@@ -62,7 +63,7 @@ class DatasetGateway implements AiGateway {
 }
 
 /** Wraps the real gateway to count calls and refuse to exceed the ceiling. */
-class BudgetedGateway implements AiGateway {
+export class BudgetedGateway implements AiGateway {
   readonly provider = 'claude-cli';
   readonly #inner: AiGateway;
   #calls = 0;
@@ -162,8 +163,61 @@ export interface SuiteReport {
   readonly maxLatencyMs: number;
 }
 
+/**
+ * Fingerprint the prompt TEXT, not its declared version.
+ *
+ * A version string is a promise a human has to keep. Editing the prompt without bumping it
+ * left the gate blind — verified by mutation. Hashing the composed text against a fixed
+ * canonical request means ANY change to the prompt fails closed, whether or not anyone
+ * remembered to bump the version.
+ */
+export function promptFingerprint(): string {
+  const canonical = composeTriagePrompt({
+    incidentId: 'fingerprint',
+    title: 'canonical title',
+    report: 'canonical report',
+    evidence: [{ id: 'e1', text: 'canonical evidence' }],
+    moduleNames: ['alpha', 'beta'],
+  });
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+}
+
+/**
+ * Refuse a recorded run whose fixtures no longer match the behavior under test.
+ *
+ * A recorded provider cannot observe a prompt or model change, so without this the one
+ * automated AI gate is blind to the two axes SPEC §7a calls behavioral software changes.
+ * Fixtures are bound to the versions they were captured against, and a mismatch stops the
+ * run rather than reporting a green result about a prompt that no longer exists.
+ */
+export function assertFixturesCurrent(): void {
+  const fingerprint = promptFingerprint();
+  const mismatches: string[] = [];
+
+  if (PROMPT_VERSION !== RECORDED_AGAINST.promptVersion) {
+    mismatches.push(`prompt version ${RECORDED_AGAINST.promptVersion} -> ${PROMPT_VERSION}`);
+  }
+  if (TRIAGE_MODEL !== RECORDED_AGAINST.model) {
+    mismatches.push(`model ${RECORDED_AGAINST.model} -> ${TRIAGE_MODEL}`);
+  }
+  if (fingerprint !== RECORDED_AGAINST.promptFingerprint) {
+    mismatches.push(`prompt text ${RECORDED_AGAINST.promptFingerprint} -> ${fingerprint} (edited without a version bump)`);
+  }
+
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Eval fixtures are stale: ${mismatches.join('; ')}. Re-record against a live provider `
+      + '(FL_EVAL_PROVIDER=live) and update RECORDED_AGAINST. A recorded run cannot observe a '
+      + 'prompt or model change, so continuing would report a green result about behavior '
+      + 'nobody evaluated.',
+    );
+  }
+}
+
 /** Run the suite. Exported so a test can assert on it without spawning a process. */
 export async function runSuite(options: { live?: boolean; fast?: boolean } = {}): Promise<SuiteReport> {
+  // Live runs exercise the real prompt, so they are the way to make fixtures current again.
+  if (options.live !== true) assertFixturesCurrent();
   const fastIds = options.live === true ? FAST_LIVE_CASE_IDS : FAST_CASE_IDS;
   let cases = options.fast === true ? CASES.filter((entry) => fastIds.includes(entry.id)) : CASES;
 
@@ -177,7 +231,14 @@ export async function runSuite(options: { live?: boolean; fast?: boolean } = {})
   const gateway: AiGateway = budgeted ?? dataset;
 
   const app = buildApp(
-    loadConfig({ FL_DATABASE_PATH: ':memory:', FL_OTLP_ENDPOINT: '', FL_SESSION_SECRET: 'eval-secret' }),
+    loadConfig({
+      FL_DATABASE_PATH: ':memory:',
+      FL_OTLP_ENDPOINT: '',
+      FL_SESSION_SECRET: 'eval-secret',
+      // The harness is not a user. Throttling it would make the suite silently skip cases
+      // rather than evaluate them, which is worse than no suite because it looks green.
+      FL_TRIAGE_MAX_CALLS: String(CASES.length * 3),
+    }),
     gateway,
   );
 

@@ -7,6 +7,7 @@ import type { Migration } from '../../spine/database.ts';
 import type { Route } from '../../spine/http.ts';
 import type { Actor } from '../../spine/actor.ts';
 import type { McpTool } from '../projects/adapters/mcp.ts';
+import type { ProjectsCapability } from '../projects/contract.ts';
 import type { IncidentsCapability } from './contract.ts';
 import { IncidentsRepository, migration } from './repository.ts';
 import { IncidentsService, systemClock, type ServiceClock } from './service.ts';
@@ -22,8 +23,12 @@ export interface IncidentsModule {
   readonly callTool: (actor: Actor, toolName: string, args?: Record<string, unknown>) => unknown;
 }
 
-export function createIncidentsModule(db: DatabaseSync, clock: ServiceClock = systemClock): IncidentsModule {
-  const capability = new IncidentsService(new IncidentsRepository(db), clock);
+export function createIncidentsModule(
+  db: DatabaseSync,
+  projects: ProjectsCapability,
+  clock: ServiceClock = systemClock,
+): IncidentsModule {
+  const capability = new IncidentsService(new IncidentsRepository(db), projects, clock);
   return {
     name: 'incidents',
     migration,

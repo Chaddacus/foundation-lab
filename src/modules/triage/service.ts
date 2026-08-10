@@ -17,6 +17,7 @@
 import { AppError } from '../../spine/errors.ts';
 import type { Actor } from '../../spine/actor.ts';
 import type { AiGateway } from '../../spine/ai-gateway.ts';
+import { RateLimiter, TRIAGE_MAX_CALLS, TRIAGE_WINDOW_MS } from '../../spine/rate-limit.ts';
 import type { IncidentsCapability } from '../incidents/contract.ts';
 import type {
   TriageCapability,
@@ -36,15 +37,48 @@ export const MAX_EVIDENCE_ITEMS = 20;
 /** Supplied by the spine: the capability names that exist, for the grounding check. */
 export type ModuleNameSource = () => readonly string[];
 
+/**
+ * Records what an attempt did, without recording what it was about.
+ *
+ * The capability contract promises per-call observability; nothing implemented it, and an
+ * `unavailable` outcome was indistinguishable from an accepted one in telemetry. Injected
+ * rather than called directly so the module stays free of telemetry detail and so a test
+ * can assert exactly which fields are recorded — the risk here is recording too MUCH, since
+ * an incident report is user content.
+ */
+export interface TriageObserver {
+  record(event: {
+    readonly provider: string;
+    readonly model: string;
+    readonly promptVersion: string;
+    readonly outcome: 'assessed' | 'unavailable';
+    readonly reason?: string;
+    readonly latencyMs: number;
+    readonly attempts: number;
+  }): void;
+}
+
+const NO_OBSERVER: TriageObserver = { record: () => {} };
+
 export class TriageService implements TriageCapability {
   readonly #incidents: IncidentsCapability;
   readonly #gateway: AiGateway;
   readonly #moduleNames: ModuleNameSource;
+  readonly #observer: TriageObserver;
+  readonly #limiter: RateLimiter;
 
-  constructor(incidents: IncidentsCapability, gateway: AiGateway, moduleNames: ModuleNameSource) {
+  constructor(
+    incidents: IncidentsCapability,
+    gateway: AiGateway,
+    moduleNames: ModuleNameSource,
+    observer: TriageObserver = NO_OBSERVER,
+    limiter: RateLimiter = new RateLimiter(TRIAGE_MAX_CALLS, TRIAGE_WINDOW_MS),
+  ) {
     this.#incidents = incidents;
     this.#gateway = gateway;
     this.#moduleNames = moduleNames;
+    this.#observer = observer;
+    this.#limiter = limiter;
   }
 
   /**
@@ -56,6 +90,17 @@ export class TriageService implements TriageCapability {
    */
   async assessIncident(actor: Actor, incidentId: string): Promise<TriageOutcome> {
     const incident = this.#incidents.getIncident(actor, incidentId);
+
+    // Bound real spend per actor. Every call costs metered subscription capacity — the
+    // application's defining constraint — and without this any authenticated user could
+    // spend it in a loop. Checked AFTER authorization so it cannot be used to probe which
+    // incidents exist, and BEFORE the prompt so a refused request costs nothing.
+    if (!this.#limiter.allow(actor.id)) {
+      throw AppError.conflict(
+        'Too many analyses have been requested recently. Wait a minute and try again.',
+      );
+    }
+    this.#limiter.record(actor.id);
 
     const request: TriageRequest = {
       incidentId: incident.id,
@@ -89,27 +134,47 @@ export class TriageService implements TriageCapability {
       const validation = validateAssessment(result.text, request.evidence, request.moduleNames);
 
       if (validation.ok) {
-        return {
+        return this.#observed({
           status: 'assessed',
           assessment: validation.assessment,
           meta: this.#meta(latencyMs, attempts),
-        };
+        });
       }
 
       // Unparseable output can be a truncated stream, so it earns the one retry.
       // Everything else is a considered answer that failed, and stops here.
       if (validation.reason !== 'unparseable_output' || attempts >= 2) {
-        return {
+        return this.#observed({
           status: 'unavailable',
           reason: validation.reason,
           detail: validation.detail,
           meta: this.#meta(latencyMs, attempts),
-        };
+        });
       }
       lastReason = validation.reason;
     }
 
-    return { status: 'unavailable', reason: lastReason, meta: this.#meta(latencyMs, attempts) };
+    return this.#observed({ status: 'unavailable', reason: lastReason, meta: this.#meta(latencyMs, attempts) });
+  }
+
+  /**
+   * Record the outcome and return it unchanged.
+   *
+   * Identifiers and outcome only. The incident report, the prompt, and the response are
+   * user content and never travel here — data minimization applies to AI operations like
+   * everything else.
+   */
+  #observed(outcome: TriageOutcome): TriageOutcome {
+    this.#observer.record({
+      provider: outcome.meta.provider,
+      model: outcome.meta.model,
+      promptVersion: outcome.meta.promptVersion,
+      outcome: outcome.status,
+      ...(outcome.status === 'unavailable' ? { reason: outcome.reason } : {}),
+      latencyMs: outcome.meta.latencyMs,
+      attempts: outcome.meta.attempts,
+    });
+    return outcome;
   }
 
   #meta(latencyMs: number, attempts: number) {

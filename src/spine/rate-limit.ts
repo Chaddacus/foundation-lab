@@ -22,57 +22,73 @@
  * in SPEC §10 and the threat model rather than implied to be solved.
  */
 
-export interface ThrottleClock {
+export interface RateLimitClock {
   now(): number;
 }
 
-export const systemThrottleClock: ThrottleClock = { now: () => Date.now() };
+export const systemRateLimitClock: RateLimitClock = { now: () => Date.now() };
 
-/** FAILED attempts allowed per address inside the window before hashing is refused. */
+/** Login: failed attempts allowed per email address inside the window. */
 export const THROTTLE_MAX_ATTEMPTS = 10;
 export const THROTTLE_WINDOW_MS = 60_000;
+
+/**
+ * Triage: real model calls allowed per actor inside the window.
+ *
+ * Lower than the login limit because each unit costs metered capacity rather than CPU. A
+ * responder working an incident needs a handful of analyses, not dozens.
+ */
+export const TRIAGE_MAX_CALLS = 6;
+export const TRIAGE_WINDOW_MS = 60_000;
 
 interface Attempt {
   count: number;
   windowStartedAt: number;
 }
 
-export class LoginThrottle {
+export class RateLimiter {
   readonly #attempts = new Map<string, Attempt>();
-  readonly #clock: ThrottleClock;
+  readonly #clock: RateLimitClock;
+  readonly #max: number;
+  readonly #windowMs: number;
 
-  constructor(clock: ThrottleClock = systemThrottleClock) {
+  constructor(
+    max: number = THROTTLE_MAX_ATTEMPTS,
+    windowMs: number = THROTTLE_WINDOW_MS,
+    clock: RateLimitClock = systemRateLimitClock,
+  ) {
     this.#clock = clock;
+    this.#max = max;
+    this.#windowMs = windowMs;
   }
 
   /**
-   * Whether another hashing attempt is allowed for this address. Does not itself count.
+   * Whether another unit of work is allowed for this key. Does not itself count.
    *
-   * Only FAILURES are counted (see `recordFailure`). Counting successes as well would
-   * throttle ordinary use — a person or a test signing in repeatedly with the correct
-   * password is not the threat, and an attacker has no correct password to use. Bounding
-   * failures bounds the attack while leaving legitimate sign-in untouched.
+   * Counting is the caller's decision, made through `record`. Login counts only FAILURES —
+   * a person signing in repeatedly with the correct password is not the threat, and an
+   * attacker has no correct password — while triage counts every call, because every call
+   * spends capacity whether or not it succeeds.
    */
-  allow(email: string): boolean {
-    const existing = this.#attempts.get(normalize(email));
+  allow(key: string): boolean {
+    const existing = this.#attempts.get(normalize(key));
     if (existing === undefined) return true;
-    if (this.#clock.now() - existing.windowStartedAt >= THROTTLE_WINDOW_MS) return true;
-    return existing.count < THROTTLE_MAX_ATTEMPTS;
+    if (this.#clock.now() - existing.windowStartedAt >= this.#windowMs) return true;
+    return existing.count < this.#max;
   }
 
   /**
-   * Count one failed attempt against this address.
+   * Count one unit of work against this key.
    *
-   * Called for unknown addresses as well as known ones, so an address with no account is
-   * throttled exactly like one with an account — the bound cannot be used to discover which
-   * addresses are registered.
+   * Called regardless of whether the subject exists, so the bound cannot be used to
+   * discover what is registered.
    */
-  recordFailure(email: string): void {
-    const key = normalize(email);
+  record(rawKey: string): void {
+    const key = normalize(rawKey);
     const now = this.#clock.now();
     const existing = this.#attempts.get(key);
 
-    if (existing === undefined || now - existing.windowStartedAt >= THROTTLE_WINDOW_MS) {
+    if (existing === undefined || now - existing.windowStartedAt >= this.#windowMs) {
       this.#attempts.set(key, { count: 1, windowStartedAt: now });
       this.#evictExpired(now);
       return;
@@ -84,11 +100,11 @@ export class LoginThrottle {
   /**
    * How many addresses are currently tracked.
    *
-   * Exists so the eviction behavior can be asserted directly. The map is attacker-controlled
+   * Exists so the eviction behavior can be asserted directly. The map is caller-controlled
    * in size, so "it does not grow without bound" is a property worth observing rather than
    * assuming — and a test that cannot see the map proves nothing about it.
    */
-  get trackedAddresses(): number {
+  get trackedKeys(): number {
     return this.#attempts.size;
   }
 
@@ -101,11 +117,11 @@ export class LoginThrottle {
    */
   #evictExpired(now: number): void {
     for (const [key, attempt] of this.#attempts) {
-      if (now - attempt.windowStartedAt >= THROTTLE_WINDOW_MS) this.#attempts.delete(key);
+      if (now - attempt.windowStartedAt >= this.#windowMs) this.#attempts.delete(key);
     }
   }
 }
 
-function normalize(email: string): string {
-  return email.trim().toLowerCase();
+function normalize(key: string): string {
+  return key.trim().toLowerCase();
 }

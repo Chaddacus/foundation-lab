@@ -12,7 +12,8 @@ import type { Route } from '../../spine/http.ts';
 import type { AiGateway } from '../../spine/ai-gateway.ts';
 import type { IncidentsCapability } from '../incidents/contract.ts';
 import type { TriageCapability } from './contract.ts';
-import { TriageService, type ModuleNameSource } from './service.ts';
+import type { RateLimiter } from '../../spine/rate-limit.ts';
+import { TriageService, type ModuleNameSource, type TriageObserver } from './service.ts';
 import { triageRoutes } from './adapters/http.ts';
 
 export interface TriageModule {
@@ -25,8 +26,10 @@ export function createTriageModule(
   incidents: IncidentsCapability,
   gateway: AiGateway,
   moduleNames: ModuleNameSource,
+  observer?: TriageObserver,
+  limiter?: RateLimiter,
 ): TriageModule {
-  const capability = new TriageService(incidents, gateway, moduleNames);
+  const capability = new TriageService(incidents, gateway, moduleNames, observer, limiter);
   return { name: 'triage', capability, routes: triageRoutes(capability) };
 }
 

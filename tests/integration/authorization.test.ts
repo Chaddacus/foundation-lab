@@ -20,6 +20,20 @@ import type { Project } from '../../src/modules/projects/contract.ts';
 import type { Release } from '../../src/modules/releases/contract.ts';
 import type { Incident } from '../../src/modules/incidents/contract.ts';
 
+/**
+ * A gateway that fails the test if anything calls a provider.
+ *
+ * The capability contract claims no automated test spends subscription capacity. That was
+ * true only because authorization refused first — a property, not a structure. This makes
+ * it structural: a regression that let a call through fails loudly instead of billing.
+ */
+const NEVER_CALLED = {
+  provider: 'never-called',
+  complete: async (): Promise<never> => {
+    throw new Error('a test reached a real AI provider — tests must never spend subscription capacity');
+  },
+};
+
 const PASSWORD = 'correct-horse-battery-staple';
 
 let app: Application;
@@ -35,7 +49,7 @@ beforeEach(() => {
     FL_DATABASE_PATH: ':memory:',
     FL_OTLP_ENDPOINT: '',
     FL_SESSION_SECRET: 'test-secret-not-a-real-key',
-  }));
+  }), NEVER_CALLED);
 
   const provisioning = app.modules.customers.provisioning;
   const acme = provisioning.provisionCustomer('Acme');
@@ -165,6 +179,33 @@ describe('incidents and triage respect the tenant boundary', () => {
     });
     assert.deepEqual(app.modules.incidents.capability.listIncidents(ana).map((i) => i.title), ['Acme incident']);
     assert.deepEqual(app.modules.incidents.capability.listIncidents(gil).map((i) => i.title), ['Globex incident']);
+  });
+
+  test('an incident cannot reference another customer\'s project', () => {
+    // Validated through the Projects CAPABILITY rather than by reading its table, so
+    // project ownership keeps one owner. Previously the field was stored unvalidated.
+    assert.equal(
+      kindOf(() => app.modules.incidents.capability.createIncident(gil, {
+        title: 'Cross-tenant attempt', report: 'x', severity: 'SEV-3', projectId: acmeProject.id,
+      })),
+      'not_found',
+    );
+  });
+
+  test('an incident may reference the caller\'s own project', () => {
+    const incident = app.modules.incidents.capability.createIncident(ana, {
+      title: 'Own project', report: 'x', severity: 'SEV-3', projectId: acmeProject.id,
+    });
+    assert.equal(incident.projectId, acmeProject.id);
+  });
+
+  test('an unknown project id is refused rather than stored', () => {
+    assert.equal(
+      kindOf(() => app.modules.incidents.capability.createIncident(ana, {
+        title: 'Bad ref', report: 'x', severity: 'SEV-3', projectId: 'no-such-project',
+      })),
+      'not_found',
+    );
   });
 
   test('triage cannot be run against another customer\'s incident', async () => {
