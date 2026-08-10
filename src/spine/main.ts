@@ -40,8 +40,13 @@ for (const event of ['uncaughtException', 'unhandledRejection'] as const) {
   });
 }
 
-server.listen(config.port, '127.0.0.1', () => {
-  app.logger.info('foundation-lab listening', { module: 'spine', operation: 'startup', port: config.port });
+server.listen(config.port, config.bindAddress, () => {
+  app.logger.info('foundation-lab listening', {
+    module: 'spine',
+    operation: 'startup',
+    port: config.port,
+    bind_address: config.bindAddress,
+  });
 });
 
 /** Drain in-flight requests and flush spans before exiting, so shutdown loses no evidence. */

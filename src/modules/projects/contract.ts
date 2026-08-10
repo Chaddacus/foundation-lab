@@ -18,9 +18,9 @@ import type { Actor } from '../../spine/actor.ts';
 /**
  * Project lifecycle status.
  *
- * `archived` exists in the value space from slice 1 so the archive journey in slice 4 is a
- * behavior change, not a schema migration. Nothing transitions a project to `archived`
- * yet — see SPEC §10.2.
+ * `active` → `archived`, one way. The value space existed from slice 1 so this became a
+ * behavior change rather than a schema migration — which is exactly what it turned out to
+ * be: no table was altered to add archiving.
  */
 export type ProjectStatus = 'active' | 'archived';
 
@@ -74,4 +74,13 @@ export interface ProjectsCapability {
   getProject(actor: Actor, id: string): Project;
   listProjects(actor: Actor): readonly Project[];
   updateProject(actor: Actor, id: string, input: UpdateProjectInput): Project;
+  /**
+   * Archive a project.
+   *
+   * One-way and idempotent-refusing: archiving an already-archived project raises
+   * `conflict` rather than silently succeeding, so a caller can tell whether its action was
+   * the one that took effect. Restoring is deliberately not provided — it is a separate
+   * decision with its own consequences, not the inverse of a button.
+   */
+  archiveProject(actor: Actor, id: string): Project;
 }

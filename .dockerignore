@@ -1,0 +1,16 @@
+# Everything the runtime does not need. Keeping tests, evals and proof artifacts out of the
+# image keeps the release artifact small and its contents defensible.
+.git
+node_modules
+tests
+evals
+docs
+test-results
+playwright-report
+artifacts
+data
+*.sqlite*
+playwright.config.ts
+tsconfig.json
+foundation-lab-mcp.json
+.claude

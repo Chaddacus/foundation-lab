@@ -1,0 +1,82 @@
+# Verification — the required checks behind both human gates.
+#
+# Every command here is the one declared in .claude/verification.json. CI and local
+# verification MUST NOT drift: a green check that ran something different from what an
+# engineer runs is worse than no check, because it is trusted.
+#
+# WHAT THIS CANNOT DO, stated here rather than left to be discovered:
+#   - live AI evals: a hosted runner has no Claude subscription (D1). The suite runs against
+#     recorded responses, which exercises validation, grounding and fallback for real but
+#     cannot observe model behavior.
+#   - Elastic correlation: the collector is loopback-only on the build machine.
+#   - deployment verification: DEV and sandbox are local Docker environments.
+# Those three run locally and their evidence is attached to the gate packets.
+
+name: verify
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+# Least privilege. This workflow reads code and reports status; it needs nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+          cache: pnpm
+
+      - name: Install dependencies
+        # --frozen-lockfile fails rather than silently resolving different versions, so the
+        # thing verified is the thing the lockfile describes.
+        run: pnpm install --frozen-lockfile
+
+      - name: Types
+        # Node strips types at runtime and never checks them. Without this every annotation
+        # in the repository is decorative.
+        run: pnpm run typecheck
+
+      - name: Tests
+        run: pnpm test
+
+      - name: Install browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser proof
+        run: pnpm exec playwright test
+
+      - name: AI eval suite (recorded provider)
+        # Spends no subscription capacity. The suite refuses to run if the prompt text or
+        # model has changed since the fixtures were recorded, so a behavioral change fails
+        # closed here rather than passing quietly.
+        run: node evals/incident-triage/run.ts
+
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: |
+            test-results/
+            playwright-report/
+          # Routine proof belongs in artifact storage, not Git (Standard 4).
+          retention-days: 14

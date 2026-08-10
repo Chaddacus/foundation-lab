@@ -25,6 +25,15 @@ export type Environment = 'LOCAL' | 'DEV' | 'SANDBOX';
 export interface Config {
   readonly environment: Environment;
   readonly port: number;
+  /**
+   * Interface to listen on. Defaults to loopback.
+   *
+   * A container must bind `0.0.0.0` or its published port is unreachable — the process would
+   * be listening on the container's own loopback. The loopback-only guarantee is preserved
+   * one level up: the host publishes to `127.0.0.1` only, so the port is not exposed to the
+   * network even though the process inside accepts on all interfaces.
+   */
+  readonly bindAddress: string;
   /** Filesystem path to the SQLite database owned by this deployment. */
   readonly databasePath: string;
   /** OTel resource identity — see the correlation contract in SPEC §8. */
@@ -68,6 +77,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return Object.freeze({
     environment,
     port,
+    bindAddress: env.FL_BIND_ADDRESS ?? '127.0.0.1',
     databasePath: env.FL_DATABASE_PATH ?? `data/foundation-lab.${environment.toLowerCase()}.sqlite`,
     serviceName: env.FL_SERVICE_NAME ?? 'foundation-lab',
     serviceVersion: env.FL_SERVICE_VERSION ?? '0.1.0',

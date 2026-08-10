@@ -124,6 +124,73 @@ describe('adapter parity over a discriminating input corpus', () => {
   });
 });
 
+describe('archive parity', () => {
+  /**
+   * These live at the CONSOLIDATION point, not in a substream.
+   *
+   * A parity test asserts that two adapters agree, so it cannot live in either one — written
+   * in the mcp substream it failed against an HTTP route that existed only on the api
+   * branch. The parent is where both exist, which is also where governance puts the
+   * verification gate.
+   */
+  test('both adapters archive identically', () => {
+    // Same name on purpose: `shape` strips ids and timestamps but not the name, so
+    // differing names would fail the comparison for a reason that has nothing to do with
+    // whether the two adapters agree.
+    const viaHttp = module_.capability.createProject(actor, { name: 'Same' });
+    const viaMcp = module_.capability.createProject(actor, { name: 'Same' });
+
+    assert.deepEqual(
+      shape(callRoute('POST', '/api/projects/:id/archive', { id: viaHttp.id })),
+      shape(module_.callTool(actor, 'archive_project', { id: viaMcp.id })),
+    );
+  });
+
+  test('both adapters refuse a second archive with the same error', () => {
+    const first = module_.capability.createProject(actor, { name: 'A' });
+    const second = module_.capability.createProject(actor, { name: 'B' });
+    module_.capability.archiveProject(actor, first.id);
+    module_.capability.archiveProject(actor, second.id);
+
+    const httpError = captureError(() => callRoute('POST', '/api/projects/:id/archive', { id: first.id }));
+    const mcpError = captureError(() => module_.callTool(actor, 'archive_project', { id: second.id }));
+
+    assert.equal(httpError.kind, 'conflict');
+    assert.equal(httpError.kind, mcpError.kind);
+    assert.equal(httpError.message, mcpError.message);
+  });
+
+  test('both adapters refuse an unknown id as not_found, not conflict', () => {
+    assert.equal(captureError(() => callRoute('POST', '/api/projects/:id/archive', { id: 'missing' })).kind, 'not_found');
+    assert.equal(captureError(() => module_.callTool(actor, 'archive_project', { id: 'missing' })).kind, 'not_found');
+  });
+
+  test('both adapters refuse editing an archived project identically', () => {
+    const first = module_.capability.createProject(actor, { name: 'A' });
+    const second = module_.capability.createProject(actor, { name: 'B' });
+    module_.capability.archiveProject(actor, first.id);
+    module_.capability.archiveProject(actor, second.id);
+
+    const httpError = captureError(() => callRoute('PATCH', '/api/projects/:id', { id: first.id }, { name: 'x' }));
+    const mcpError = captureError(() => module_.callTool(actor, 'update_project', { id: second.id, name: 'x' }));
+
+    assert.equal(httpError.kind, 'conflict');
+    assert.equal(httpError.message, mcpError.message);
+  });
+
+  test('archiving is in the discriminating corpus for both adapters', () => {
+    // The corpus catches a one-sided default or coercion; archiving is a write, so it
+    // belongs there rather than only in hand-written cases.
+    for (const id of ['', '   ', 'missing']) {
+      assert.deepEqual(
+        outcome(() => callRoute('POST', '/api/projects/:id/archive', { id })),
+        outcome(() => module_.callTool(actor, 'archive_project', { id })),
+        `archive diverged for id "${id}"`,
+      );
+    }
+  });
+});
+
 describe('capability coverage parity', () => {
   /**
    * Derived from the service's own methods rather than hand-listed, so a capability added

@@ -1,0 +1,130 @@
+# Release — build once, so the same artifact can be promoted.
+#
+# Two jobs with a human decision between them:
+#   build           produces ONE artifact and pushes it to GHCR by digest.
+#   authorize-deploy requires the `sandbox-prod` environment, whose required-reviewer rule IS
+#                   Human Gate #2. The job cannot start until a person approves that exact
+#                   run. GitHub enforces it; nothing in this repository or in Claude's
+#                   configuration can bypass it.
+#
+# The second job does NOT perform the deployment, and says so. sandbox-prod is a loopback-only
+# stack on the operator's machine and is unreachable from a hosted runner. Approving the job
+# IS the authorization; the deploy is then executed against the local environment with the
+# artifact digest this run produced.
+#
+# An earlier revision of this file had no gate at all, because required-reviewer protection is
+# unavailable on private repositories under a free plan. An environment created without that
+# rule exists but enforces NOTHING — a control that looks real and is not. Rather than ship
+# that, the job was removed until the repository became public and the rule could be verified
+# present.
+#
+# The artifact is identified by DIGEST throughout. A tag can be repointed at different bytes,
+# so a tag-based promotion would make "the artifact we approved" unverifiable.
+
+name: release
+
+on:
+  push:
+    branches: [main]
+  # Dispatchable so the build can be exercised without waiting for a promotion to main.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      # Lets the runner mint a short-lived OIDC token for provenance attestation, so the
+      # artifact carries proof of WHO built it and from what — the gap named in the Gate #2
+      # packet as "digest gives immutability, not authorship".
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # The base image is pinned by digest in the Dockerfile for the same reason the
+          # output is addressed by digest: reproducibility is not a claim unless it is checkable.
+          build-args: |
+            FL_VCS_REF=${{ github.sha }}
+            FL_SERVICE_VERSION=${{ github.ref_name }}-${{ github.run_number }}
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          provenance: true
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Record release identity
+        run: |
+          echo "artifact: ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}"
+          echo "revision: ${{ github.sha }}"
+
+      - name: Print the Gate #2 procedure
+        run: |
+          echo "Artifact built and attested:"
+          echo "  ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}"
+          echo "  revision ${{ github.sha }}"
+          echo
+          echo "This workflow does NOT deploy. Promotion to sandbox-prod is Human Gate #2,"
+          echo "performed on the machine hosting that environment, per"
+          echo "docs/release/gate-2-packet.md. After approval, on that machine:"
+          echo
+          echo "  FL_IMAGE=ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }} \\"
+          echo "  FL_VCS_REF=${{ github.sha }} \\"
+          echo "  FL_SERVICE_VERSION=${{ github.ref_name }}-${{ github.run_number }} \\"
+          echo "  FL_SESSION_SECRET=\"\$(rbw get foundation-lab-sandbox-session)\" \\"
+          echo "  docker compose -f compose.sandbox.yaml up -d"
+          echo
+          echo "LIVE VERIFIED is declared only after:"
+          echo "  node scripts/verify-deployment.ts http://127.0.0.1:4330"
+
+  authorize-deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # HUMAN GATE #2 — the environment's required-reviewer rule stops this job until a person
+    # approves this exact run and this exact artifact.
+    environment:
+      name: sandbox-prod
+    steps:
+      - name: Record the authorization and the operator procedure
+        run: |
+          echo "Gate #2 APPROVED for:"
+          echo "  ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}"
+          echo "  revision ${{ github.sha }}"
+          echo
+          echo "sandbox-prod is loopback-only on the operator machine and unreachable from a"
+          echo "hosted runner, so this job authorizes rather than deploys. On that machine:"
+          echo
+          echo "  FL_IMAGE=ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }} \\"
+          echo "  FL_VCS_REF=${{ github.sha }} \\"
+          echo "  FL_SERVICE_VERSION=${{ github.ref_name }}-${{ github.run_number }} \\"
+          echo "  FL_SESSION_SECRET=\"\$(rbw get foundation-lab-sandbox-session)\" \\"
+          echo "  docker compose -f compose.sandbox.yaml up -d"
+          echo
+          echo "LIVE VERIFIED is declared only after this passes:"
+          echo "  node scripts/verify-deployment.ts http://127.0.0.1:4330"

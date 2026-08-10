@@ -26,3 +26,10 @@
 }
 
 /* The sign-in form reuses the same card treatment; it is styled by the Customers module. */
+
+/* A destructive control looks different from a neutral one. Colour is not the only cue —
+ * the button text says "Archive" and the confirmation states the consequence. */
+.control--danger {
+  color: var(--color-danger);
+  border-color: currentColor;
+}
