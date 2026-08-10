@@ -206,7 +206,7 @@ test.describe('Projects UI', () => {
     await expect(page.getByTestId('project-list')).toBeVisible();
 
     await expect(page.locator('.data-table caption').first()).toHaveText(/Projects, newest first/);
-    await expect(page.locator('[data-testid="project-list"] thead th[scope="col"]')).toHaveCount(4);
+    await expect(page.locator('[data-testid="project-list"] thead th[scope="col"]')).toHaveCount(5);
     await expect(page.locator('[data-testid="project-list"] tbody th[scope="row"]').first()).toBeVisible();
   });
 
