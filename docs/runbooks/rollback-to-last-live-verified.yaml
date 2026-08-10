@@ -1,0 +1,72 @@
+# Bounded self-healing runbook — instance.
+# Conforms to templates/runbooks/runbook-schema.yaml. Executor: scripts/runbook-rollback.ts.
+# This runbook does NOT deploy new code: it redeploys an artifact that was ALREADY built,
+# gated, and live-verified. New code always goes through the two human gates.
+
+runbook_id: "rb-rollback-sandbox-001"
+title: "Roll sandbox-prod back to the last live-verified artifact"
+owner: "chad.simon@cloudwarriors.ai"
+reviewed_by: ""            # UNFILLED: no independent human reviewer yet. Production autonomy
+                           # is therefore NOT enabled — the executor refuses --arm without it.
+approved_date: ""
+expiry: "2026-11-10"       # autonomy would lapse after this date without re-review
+tested:
+  environment: "DEV"
+  date: "2026-08-10"
+  evidence: "docs/runbooks/rollback-dev-test-2026-08-10.md"
+
+trigger:
+  entry_conditions:
+    - "Elastic rule 'SANDBOX login flood — password-hash starvation' active"
+    - "OR verify-deployment.ts against the environment fails its identity check"
+  grounding_queries:
+    - "GET /api/meta on the target environment returns the CURRENT running digest"
+    - "the proposed rollback digest exists locally and differs from the current one"
+
+scope:
+  environment: "SANDBOX"
+  services: ["foundation-lab"]
+
+action:
+  allowed: "redeploy the named previous artifact DIGEST via compose, then verify identity"
+  parameter_bounds:
+    artifact_source: "last-live-verified"   # a digest recorded in a release record, never arbitrary
+    builds_code: false                       # hard: the executor never invokes a build
+  prohibited:
+    - "building or pushing any image"
+    - "deploying any digest not passed explicitly as the rollback target"
+    - "touching any environment other than the one named"
+  prerequisites:
+    - "a rollback target digest is supplied and is a valid sha256 reference"
+    - "the target environment is currently running a DIFFERENT digest (else nothing to do)"
+    - "FL_SESSION_SECRET resolvable at launch (human-unlocked backend)"
+
+concurrency:
+  lock: "a lockfile beside the compose file; the action aborts if held"
+  max_executions_per_window: "1 per 10 minutes"
+
+verification:
+  post_action_checks:
+    - "verify-deployment.ts passes 4/4 with the ROLLBACK digest as the expectation"
+  success_condition: "the running deployment reports the rollback digest and answers authed reads"
+
+failure:
+  abort_conditions:
+    - "the rollback digest is not present locally"
+    - "post-action verification does not report the rollback digest"
+  on_abort: "stop; do not retry; leave the environment as found or as last consistent; escalate"
+  escalation: "notify the operator with the Case id, the grounding output, and the exact failure"
+
+recovery:
+  rollback_of_the_rollback: "re-run the executor with the prior digest as the target; symmetric"
+
+notification:
+  when: "on trigger, on completion, on abort"
+  channel: "operator console + Elastic Case comment"
+
+provenance:
+  record:
+    - "trigger evidence and grounding output"
+    - "current digest, rollback digest"
+    - "verification outcome"
+    - "Case id, session id"
