@@ -79,11 +79,14 @@ test.describe('focus is not obscured (WCAG 2.2 AA 2.4.11)', () => {
    * NOT TESTED: that `scroll-padding-block-start` keeps a focused control clear of the
    * sticky header when the page scrolls.
    *
-   * An assertion was written for it and removed. Under mutation — deleting the
-   * scroll-padding — it still passed, because no page in the fixture is long enough to
-   * scroll and Chromium's scroll-into-view already clears the header. A test that cannot
-   * fail is worse than no test, because it is trusted. The padding is still set; it is
-   * simply not defended, and that is recorded here rather than implied by a green result.
+   * An assertion was written for it and removed: under mutation — deleting the
+   * scroll-padding — it still passed. The reason first recorded here was that no fixture
+   * page is long enough to scroll. That was wrong, and review measured it: the signed-in
+   * workspace is ~1300px against a 720px viewport, and scrolls. The true reason is that no
+   * scenario was found in which the property changes where a focused control lands, because
+   * Chromium's own scroll-into-view already clears the sticky header in every case tried.
+   * The padding is still set; it is simply not defended, and that is recorded here rather
+   * than implied by a green result. A test that cannot fail is worse than no test.
    *
    * Partial occlusion passes WCAG 2.4.11 Minimum, so this is a nicety rather than the AA
    * criterion the assertion above defends.
@@ -119,7 +122,7 @@ test.describe('contrast is a property of the pair, not of the colour', () => {
     expect(ratio, `badge text is ${ratio.toFixed(2)}:1 on the hovered row`).toBeGreaterThanOrEqual(4.5);
   });
 
-  test('every status badge colour clears AA on both the plain and hovered row', async ({ page }) => {
+  test('every foreground colour clears AA on every surface it can appear on', async ({ page }) => {
     await signIn(page);
 
     const ratios = await page.evaluate(() => {
@@ -131,7 +134,15 @@ test.describe('contrast is a property of the pair, not of the colour', () => {
         return getComputedStyle(probe).color;
       };
       const result = {
-        surfaces: [resolve('--color-bg'), resolve('--rule-soft')],
+        // Every surface a badge or a run of text can actually sit on: the page ground, the
+        // hover tint, the selected-row tint, and the raised card. Checking only the first
+        // two would have named itself "every status badge colour" while measuring half.
+        surfaces: [
+          resolve('--color-bg'),
+          resolve('--rule-soft'),
+          resolve('--color-surface'),
+          resolve('--surface-raised'),
+        ],
         colours: ['--color-success', '--color-warning', '--color-danger', '--color-text-muted', '--color-primary']
           .map((token) => [token, resolve(token)] as const),
       };
@@ -180,12 +191,25 @@ test.describe('forced colours', () => {
 
     await page.emulateMedia({ forcedColors: 'active' });
 
+    // Compare the selected row against an unselected one in the SAME render. An earlier
+    // version of this assertion read only the selected cell and required a border wider
+    // than zero — which every cell already has from the base table rule, so it passed with
+    // the entire forced-colours block deleted. Selection is a DIFFERENCE; assert the
+    // difference, not a property the unselected row shares.
     const distinguishable = await page.evaluate(() => {
       const selected = document.querySelector('[data-testid="project-row"][aria-current]');
+      const plain = document.querySelector('[data-testid="project-row"]:not([aria-current])');
       if (selected === null) return { reason: 'no row is marked selected', ok: false };
-      const cell = selected.querySelector('th, td') as HTMLElement;
-      const border = getComputedStyle(cell).borderBottomWidth;
-      return { reason: `border ${border}`, ok: parseFloat(border) > 0 };
+      if (plain === null) return { reason: 'no unselected row to compare against', ok: false };
+      const edge = (row: Element) => {
+        const style = getComputedStyle(row.querySelector('th, td') as HTMLElement);
+        return { width: parseFloat(style.borderBlockEndWidth), colour: style.borderBlockEndColor };
+      };
+      const [a, b] = [edge(selected), edge(plain)];
+      return {
+        reason: `selected ${a.width}px ${a.colour} vs unselected ${b.width}px ${b.colour}`,
+        ok: a.width !== b.width || a.colour !== b.colour,
+      };
     });
 
     expect(distinguishable.ok, `selection is not conveyed in forced colours: ${distinguishable.reason}`).toBe(true);

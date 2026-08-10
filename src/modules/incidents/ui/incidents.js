@@ -25,7 +25,7 @@ export function mountIncidents(container) {
   selectedId = null;
 
   root.innerHTML = `
-    <form class="stack card incidents-form" data-testid="create-incident-form" novalidate>
+    <form class="stack card" data-testid="create-incident-form" novalidate>
       <h3>Report an incident</h3>
       <fieldset class="stack form-fields" data-testid="incident-fieldset">
         <legend class="visually-hidden">New incident details</legend>

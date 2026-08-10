@@ -111,7 +111,13 @@ h3 { font-size: var(--text-2); line-height: 1.3; }
 
 /* Above the sticky header. The first tab stop on the page must not be painted over by
  * chrome that arrived later — asserted by test, because nothing in a suite that checks
- * `toBeVisible()` and a bounding box can see occlusion. */
+ * `toBeVisible()` and a bounding box can see occlusion.
+ *
+ * `fixed`, not `absolute`, and the two changes do different jobs: `z-index` is what closes
+ * the occlusion defect, while `fixed` is what keeps the link on screen when the link is
+ * focused on an already-scrolled page. Measured at scrollY 400: fixed stays at (8,8) fully
+ * painted; absolute leaves the viewport with the top of the document. Only the z-index half
+ * is defended by a test — no fixture page scrolls (see the note in the spec file). */
 .skip-link:focus {
   position: fixed;
   inset-inline-start: var(--space-2);
@@ -356,9 +362,12 @@ h3 { font-size: var(--text-2); line-height: 1.3; }
     outline-offset: 2px;
   }
 
-  .badge {
-    border: 1px solid CanvasText;
-  }
+  /* No `.badge` rule here. One was written and removed: badges already carry a 1px border
+   * that forced colours repaints as CanvasText, so it changed nothing measurable — and by
+   * declaring `border-style: solid` at equal specificity it would have overridden
+   * `.badge--suggested`'s dashed border (the cue marking an AI severity as provisional)
+   * had the stylesheet load order ever changed. A rule that buys nothing and can silently
+   * erase a provenance affordance is worse than no rule. */
 }
 
 @media (prefers-reduced-motion: no-preference) {
