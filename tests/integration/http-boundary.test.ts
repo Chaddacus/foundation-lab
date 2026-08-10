@@ -143,6 +143,63 @@ describe('status mapping', () => {
   });
 });
 
+describe('archive over HTTP', () => {
+  test('archiving is a POST that returns the transitioned project', async () => {
+    const created = await (await fetch(`${baseUrl}/api/projects`, authed(cookie, {
+      method: 'POST', body: JSON.stringify({ name: 'To archive' }),
+    }))).json();
+
+    const response = await fetch(`${baseUrl}/api/projects/${created.data.id}/archive`, authed(cookie, { method: 'POST' }));
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).data.status, 'archived');
+  });
+
+  test('archiving twice responds 409, so a client can tell which call took effect', async () => {
+    const created = await (await fetch(`${baseUrl}/api/projects`, authed(cookie, {
+      method: 'POST', body: JSON.stringify({ name: 'Twice archived' }),
+    }))).json();
+
+    await fetch(`${baseUrl}/api/projects/${created.data.id}/archive`, authed(cookie, { method: 'POST' }));
+    const second = await fetch(`${baseUrl}/api/projects/${created.data.id}/archive`, authed(cookie, { method: 'POST' }));
+
+    assert.equal(second.status, 409);
+    assert.equal((await second.json()).error.kind, 'conflict');
+  });
+
+  test('editing an archived project responds 409', async () => {
+    const created = await (await fetch(`${baseUrl}/api/projects`, authed(cookie, {
+      method: 'POST', body: JSON.stringify({ name: 'Frozen' }),
+    }))).json();
+    await fetch(`${baseUrl}/api/projects/${created.data.id}/archive`, authed(cookie, { method: 'POST' }));
+
+    const edit = await fetch(`${baseUrl}/api/projects/${created.data.id}`, authed(cookie, {
+      method: 'PATCH', body: JSON.stringify({ name: 'Renamed' }),
+    }));
+    assert.equal(edit.status, 409);
+  });
+
+  test('archiving requires authentication like every other capability', async () => {
+    const anonymous = await fetch(`${baseUrl}/api/projects/anything/archive`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+    });
+    assert.equal(anonymous.status, 401);
+  });
+
+  test('archiving is subject to the CSRF content-type gate', async () => {
+    const created = await (await fetch(`${baseUrl}/api/projects`, authed(cookie, {
+      method: 'POST', body: JSON.stringify({ name: 'CSRF archive' }),
+    }))).json();
+
+    // A state-changing route reached by a cross-site form would be a way to archive
+    // someone's project from another origin.
+    const response = await fetch(`${baseUrl}/api/projects/${created.data.id}/archive`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain', cookie, origin: 'http://evil.example' },
+    });
+    assert.equal(response.status, 400);
+  });
+});
+
 describe('malformed requests cannot kill the process', () => {
   // Regression: URL construction and route matching ran OUTSIDE the error boundary, so
   // `curl '.../%'` threw URIError from the listener and exited the process. One
