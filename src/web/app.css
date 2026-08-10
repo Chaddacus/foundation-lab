@@ -40,9 +40,13 @@
   --color-primary-contrast: #FFFFFF;
   --color-focus: #3538CD;
 
-  --color-success: #0F7B43;
+  /* Darkened from #0F7B43 / #A15C07. The row-hover background introduced by this pass put
+   * badge text at 4.50:1 and 4.37:1 against it — below the 4.5:1 AA threshold for text this
+   * size. Contrast is a property of the PAIR, so adding a surface changes what the
+   * foreground may be. */
+  --color-success: #0B6636;
   --color-danger: #B42318;
-  --color-warning: #A15C07;
+  --color-warning: #834B05;
 
   --radius-1: 5px;
   --radius-2: 10px;
@@ -53,6 +57,8 @@
   --surface-raised: #FFFFFF;
   --rule-soft: #E8ECF1;
   --tracking-tight: -0.014em;
+  --radius-focus: 3px;
+  --color-primary-hover: #2A2CA8;
 }
 
 /* Focus ring: accent-coloured, offset, with a light separator ring beneath it.
@@ -67,12 +73,14 @@
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   box-shadow: 0 0 0 2px var(--surface-raised);
-  border-radius: 3px;
+  border-radius: var(--radius-focus);
 }
 
 body {
-  font-size: 15.5px;
-  letter-spacing: 0.001em;
+  /* rem, not px. A fixed pixel body size ignores the reader's own default-font-size setting
+   * while every rem-based heading around it still scales — measured, body stayed at 15.5px
+   * from a 16px root through a 32px root, taking the heading-to-body ratio from 2:1 to 4:1. */
+  font-size: 0.97rem;
 }
 
 h1, h2, h3 { letter-spacing: var(--tracking-tight); text-wrap: balance; }
@@ -101,11 +109,14 @@ h3 { font-size: var(--text-2); line-height: 1.3; }
   white-space: nowrap;
 }
 
+/* Above the sticky header. The first tab stop on the page must not be painted over by
+ * chrome that arrived later — asserted by test, because nothing in a suite that checks
+ * `toBeVisible()` and a bounding box can see occlusion. */
 .skip-link:focus {
-  position: absolute;
+  position: fixed;
   inset-inline-start: var(--space-2);
   inset-block-start: var(--space-2);
-  z-index: 1;
+  z-index: 10;
   padding: var(--space-2) var(--space-3);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -117,11 +128,19 @@ h3 { font-size: var(--text-2); line-height: 1.3; }
   background: var(--surface-raised);
   position: sticky;
   top: 0;
-  z-index: 2;
-  /* The header carries identity and the sign-out control; keeping it in view is a usability
-   * decision, not decoration. It sits above the skip link's focused state by z-index order,
-   * so the skip link is still reachable and visible. */
+  /* Below the skip link deliberately — see the z-index note there. An earlier revision put
+   * the header ABOVE it and claimed that kept the link "reachable and visible". Sitting above
+   * an opaque element is precisely what makes it invisible: measured, the focused link had
+   * 0 of 9 sample points visible and `elementFromPoint` returned the brand mark. */
+  z-index: 1;
   box-shadow: var(--shadow-1);
+}
+
+/* A sticky header shrinks the scroll viewport. Without this, focusing a control lower in a
+ * long table scrolls it to the top of the document — underneath the header. WCAG 2.2 AA
+ * 2.4.11 Focus Not Obscured. */
+:root {
+  scroll-padding-block-start: 5rem;
 }
 
 .app-header__inner {
@@ -318,9 +337,28 @@ h3 { font-size: var(--text-2); line-height: 1.3; }
 
 .data-table tbody tr[aria-current] {
   background: var(--color-surface);
-  /* Selection is carried by a leading rule as well as a tint, so it survives a
-   * high-contrast or forced-colours rendering where the tint may be dropped. */
+  /* A leading rule beside the tint. NOT claimed as forced-colours resilience: forced-colours
+   * mode strips box-shadow entirely, measured — the selected and unselected rows rendered
+   * identically. The block below is what actually survives it. */
   box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+/* Forced colours removes backgrounds and shadows, so selection needs a border and the focus
+ * ring needs a system colour. Without this the only remaining selection cue is `aria-current`,
+ * which serves assistive technology but not a sighted user in high-contrast mode. */
+@media (forced-colors: active) {
+  .data-table tbody tr[aria-current] > * {
+    border-block-end: 2px solid Highlight;
+  }
+
+  :focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .badge {
+    border: 1px solid CanvasText;
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -343,8 +381,8 @@ h3 { font-size: var(--text-2); line-height: 1.3; }
 }
 
 .card button[type='submit']:hover:not(:disabled) {
-  background: #2A2CA8;
-  border-color: #2A2CA8;
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
 }
 
 .badge {
