@@ -18,6 +18,11 @@
       "name": "authorization-heartbeat",
       "$comment": "Tenant isolation is the property most costly to break silently, so it is checked at FAST as well as MODULE.",
       "command": "node --test tests/integration/authorization.test.ts"
+    },
+    {
+      "name": "mcp-serves",
+      "$comment": "The MCP transport is a second process entry point over the same contracts; a cheap check that it still starts and lists tools.",
+      "command": "node --test tests/contract/mcp-transport.test.ts"
     }
   ],
   "module": {
@@ -85,6 +90,10 @@
       {
         "name": "http-boundary",
         "command": "node --test tests/integration/http-boundary.test.ts"
+      },
+      {
+        "name": "mcp-transport",
+        "command": "node --test tests/contract/mcp-transport.test.ts"
       }
     ]
   },

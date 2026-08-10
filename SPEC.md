@@ -61,7 +61,9 @@ Business capabilities are implemented once in the module. HTTP/REST and MCP are 
 
 The strength and the limit of that check, stated honestly: it caught an injected HTTP-only default that the earlier hand-picked cases missed, and it caught a real id-validation rule that existed only in the MCP adapter. It is a corpus, not a proof — a divergence reachable only by an input outside the corpus would still pass.
 
-**The MCP adapter has no transport.** Its tools and dispatcher are contract-tested, but no stdio server serves them, so MCP is currently unreachable by any client. See §10.
+**MCP is served over stdio** by `src/spine/mcp-main.ts`, a process entry point peer to `main.ts` over the same module contracts. It is proven against a real `@modelcontextprotocol/sdk` client in `tests/contract/mcp-transport.test.ts`, including that tenant isolation survives the transport.
+
+Authority model: the server authenticates ONCE at startup with a real credential and acts as exactly that user for every call. It cannot become another user, cannot escalate, and exposes no login, provisioning, or admin tool. It refuses to start without a credential rather than falling back to an anonymous identity.
 
 ## 4. Module contracts
 
@@ -158,7 +160,7 @@ Local, DEV, and a sandbox production-like environment — three local Docker sta
 
 1. `archiveProject` is unimplemented. Slice 4.
 2. **No admin role.** Every user has identical rights within their customer. Tenant and account provisioning is reachable only from the local seed, not over any adapter.
-3. **MCP is unreachable.** The adapter and its tools exist and are contract-tested; no stdio transport serves them to a client. Exercising it requires launching with `--mcp-config <app> --strict-mcp-config`.
+3. The MCP server acts as a single hard-coded user chosen at startup. Per-caller identity over MCP needs an authority model that does not exist yet, and is not required before slice 5.
 4. **No metrics are emitted.** Traces and logs are exported; metrics are not. This weakens the incident journey the reference application is meant to prove.
 5. No AI capability and therefore no eval suite. Slice 3. Per the mandatory eval policy, the AI capability is NOT READY until its suite exists and passes.
 6. Only the local environment exists. Slice 5.

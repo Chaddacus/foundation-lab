@@ -11,3 +11,7 @@ data/
 artifacts/
 test-results/
 playwright-report/
+
+# Generated locally by scripts/write-mcp-config.ts. Holds LOCAL credential VALUES,
+# and the repository stores references rather than values (SPEC §7).
+foundation-lab-mcp.json
