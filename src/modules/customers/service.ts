@@ -117,6 +117,12 @@ export class CustomersService implements CustomersCapability {
 
     this.#repository.clearFailedAttempts(row.id);
 
+    // The login succeeded, so return the throttle slot it reserved: a person signing in
+    // repeatedly with the correct password is not the threat, and holding the slot would
+    // throttle them. The reservation did its job — it bounded concurrent hashing for this
+    // address while the hash was in flight. Only failures stay counted.
+    this.#throttle.release(email);
+
     // Session fixation is structurally impossible here: ids are generated server-side and
     // a client-supplied one is never adopted, so every login already yields a fresh id.
     //

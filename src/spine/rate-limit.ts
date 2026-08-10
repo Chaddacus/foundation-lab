@@ -107,10 +107,12 @@ export class RateLimiter {
    * it has no `await`, so on a single-threaded event loop the check and the count are one
    * indivisible action. Call it BEFORE the hash so the count is what bounds the expensive work.
    *
-   * Counts every ATTEMPT, not only failures: every attempt hashes, and bounding hashing is
-   * this limiter's purpose on the login path. A person signing in ten times in a minute is
-   * pathological; an attacker gets exactly the same ceiling. (The separate per-user lockout,
-   * not this, is the anti-guessing control, and it still counts only failures.)
+   * Reserves a slot for the duration of the work; the caller `release`s it if the work turns
+   * out not to count. On the login path the reservation is held across the hash — so it bounds
+   * CONCURRENT hashing per address — and is released on a SUCCESSFUL login, so a legitimate
+   * user signing in repeatedly is not throttled, while every failure stays counted. Combined,
+   * the long-term count is failures (the guessing signal) and the in-flight count is the
+   * concurrency bound (the DoS signal).
    */
   tryAcquire(rawKey: string): boolean {
     const key = normalize(rawKey);
@@ -126,6 +128,15 @@ export class RateLimiter {
     if (existing.count >= this.#max) return false;
     existing.count += 1;
     return true;
+  }
+
+  /**
+   * Return a slot taken by `tryAcquire` — used when the work succeeded and should not count
+   * against the limit. Never goes below zero, and never resurrects an already-expired window.
+   */
+  release(rawKey: string): void {
+    const existing = this.#attempts.get(normalize(rawKey));
+    if (existing !== undefined && existing.count > 0) existing.count -= 1;
   }
 
   /**

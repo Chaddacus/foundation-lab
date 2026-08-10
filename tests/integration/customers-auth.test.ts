@@ -167,6 +167,20 @@ describe('login consults the throttle', () => {
     // do this, which is why unknown addresses could previously drive unlimited hashing.
     assert.equal(throttle.allow('ghost@nowhere.test'), false);
   });
+
+  test('repeated SUCCESSFUL logins are not throttled — the slot is returned on success', async () => {
+    // The throttle reserves a slot before hashing to bound concurrency, but a correct login
+    // returns it. Without that refund, counting every attempt would throttle a legitimate
+    // user signing in more than the limit within the window — which the e2e suite, signing
+    // in many times against one server, is the canary for.
+    const throttle = new RateLimiter(THROTTLE_MAX_ATTEMPTS, THROTTLE_WINDOW_MS, throttleClock);
+    const service = buildService(throttle);
+
+    for (let attempt = 0; attempt < THROTTLE_MAX_ATTEMPTS * 3; attempt += 1) {
+      const grant = await service.login({ email: 'ana@acme.test', password: PASSWORD });
+      assert.ok(grant.sessionId, `a legitimate login was throttled at attempt ${attempt + 1}`);
+    }
+  });
 });
 
 describe('lockout', () => {
